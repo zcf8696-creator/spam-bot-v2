@@ -1,7 +1,6 @@
 const { Client } = require('discord.js-selfbot-v13');
 const fs = require('fs');
 const express = require('express');
-const cron = require('node-cron');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
@@ -66,12 +65,7 @@ async function doSpam(phone, credits) {
         // ממתין ל-modal
         const modalPromise = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error('timeout')), 15000);
-            
-            client.once('modalSubmit', async (modal) => {
-                // לא בשימוש - נטפל בזה ידנית
-            });
 
-            // מחכים ל-modal_create
             client.once('modalCreate', async (modal) => {
                 clearTimeout(timeout);
                 try {
