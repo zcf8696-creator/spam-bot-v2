@@ -55,6 +55,9 @@ async function doSpam(phone, credits) {
 
         if (!spamButton) return '❌ הכפתור לא נמצא';
 
+        const applicationId = message.author.id;
+        console.log(`[+] Application ID: ${applicationId}`);
+
         console.log(`[+] Clicking Spam button...`);
 
         const modalPromise = new Promise((resolve, reject) => {
@@ -72,7 +75,6 @@ async function doSpam(phone, credits) {
 
         const modal = await modalPromise;
 
-        // ממלא שדות
         let fieldIndex = 0;
         for (const row of modal.components) {
             for (const comp of row.components) {
@@ -84,82 +86,47 @@ async function doSpam(phone, credits) {
             }
         }
 
-        // מנסה לשלוח את ה-modal בכמה דרכים
-        console.log(`[DEBUG] Trying to submit modal...`);
-        console.log(`[DEBUG] Modal customId: ${modal.customId}`);
-        console.log(`[DEBUG] Modal title: ${modal.title}`);
+        const sessionId = client.ws.shards.first()?.sessionId;
+        console.log(`[DEBUG] Session ID: ${sessionId}`);
 
-        // מציג את כל השיטות הזמינות
-        const allMethods = [];
-        let obj = modal;
-        while (obj && obj !== Object.prototype) {
-            allMethods.push(...Object.getOwnPropertyNames(obj).filter(n => typeof modal[n] === 'function'));
-            obj = Object.getPrototypeOf(obj);
-        }
-        console.log(`[DEBUG] Available methods:`, [...new Set(allMethods)].join(', '));
-
-        try {
-            if (typeof modal.submit === 'function') {
-                await modal.submit();
-                console.log(`[+] modal.submit() worked`);
-                return `✅ ספאם בוצע! ${phone} | ${credits}`;
-            }
-            if (typeof modal.send === 'function') {
-                await modal.send();
-                console.log(`[+] modal.send() worked`);
-                return `✅ ספאם בוצע! ${phone} | ${credits}`;
-            }
-            if (typeof modal.respond === 'function') {
-                await modal.respond();
-                console.log(`[+] modal.respond() worked`);
-                return `✅ ספאם בוצע! ${phone} | ${credits}`;
-            }
-            if (modal.interaction && typeof modal.interaction.submit === 'function') {
-                await modal.interaction.submit();
-                console.log(`[+] modal.interaction.submit() worked`);
-                return `✅ ספאם בוצע! ${phone} | ${credits}`;
-            }
-
-            // ניסיון אחרון - POST ישירות ל-API של דיסקורד
-            console.log(`[DEBUG] Trying direct POST to Discord API...`);
-
-            const payload = {
-                type: 5,
-                data: {
-                    custom_id: modal.customId,
-                    components: modal.components.map(row => ({
-                        type: 1,
-                        components: row.components.map((comp, i) => ({
-                            type: 4,
-                            custom_id: comp.customId,
-                            value: i === 0 ? phone : String(credits)
-                        }))
+        const payload = {
+            type: 5,
+            application_id: applicationId,
+            channel_id: CHANNEL_ID,
+            guild_id: GUILD_ID,
+            data: {
+                custom_id: modal.customId,
+                components: modal.components.map(row => ({
+                    type: 1,
+                    components: row.components.map((comp, i) => ({
+                        type: 4,
+                        custom_id: comp.customId,
+                        value: i === 0 ? phone : String(credits)
                     }))
-                }
-            };
+                }))
+            },
+            session_id: sessionId,
+            nonce: Date.now().toString()
+        };
 
-            console.log(`[DEBUG] POST payload:`, JSON.stringify(payload));
+        console.log(`[DEBUG] POST payload:`, JSON.stringify(payload));
 
-            const response = await fetch('https://discord.com/api/v9/interactions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': TOKEN,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
+        const response = await fetch('https://discord.com/api/v9/interactions', {
+            method: 'POST',
+            headers: {
+                'Authorization': TOKEN,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
 
-            if (response.ok) {
-                console.log(`[+] Direct POST successful!`);
-                return `✅ ספאם בוצע! ${phone} | ${credits}`;
-            } else {
-                const errText = await response.text();
-                console.log(`[-] POST failed: ${response.status} - ${errText}`);
-                return `❌ POST failed: ${response.status}`;
-            }
-        } catch (submitError) {
-            console.log(`[-] Submit error: ${submitError.message}`);
-            return `❌ שגיאה בשליחה: ${submitError.message}`;
+        if (response.ok || response.status === 204) {
+            console.log(`[+] Direct POST successful!`);
+            return `✅ ספאם בוצע! ${phone} | ${credits}`;
+        } else {
+            const errText = await response.text();
+            console.log(`[-] POST failed: ${response.status} - ${errText}`);
+            return `❌ POST failed: ${response.status}`;
         }
     } catch (e) {
         console.log(`[-] Error: ${e.message}`);
