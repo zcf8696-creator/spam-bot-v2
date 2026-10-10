@@ -31,13 +31,6 @@ app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 
 const client = new Client({ checkUpdate: false });
 
-function generateSnowflake() {
-    const epoch = 1420070400000n;
-    const now = BigInt(Date.now());
-    const snowflake = (now - epoch) << 22n;
-    return snowflake.toString();
-}
-
 async function doSpam(phone, credits) {
     try {
         console.log(`[+] Spam: ${phone} | ${credits} credits`);
@@ -62,103 +55,45 @@ async function doSpam(phone, credits) {
 
         if (!spamButton) return '❌ הכפתור לא נמצא';
 
-        const applicationId = message.author.id;
-        console.log(`[+] Application ID: ${applicationId}`);
-
-        // שלב 1 - לוחץ על הכפתור כדי לקבל את ה-modal custom_id
         console.log(`[+] Clicking Spam button...`);
 
+        // ממתין ל-modal עם השם הנכון של האירוע
         const modalPromise = new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error('Timeout')), 10000);
-            const handler = (m) => {
+            const timeout = setTimeout(() => reject(new Error('Timeout - no modal')), 10000);
+            client.once('interactionModalCreate', (m) => {
                 clearTimeout(timeout);
                 console.log(`[+] Modal received! customId: ${m.customId}`);
                 resolve(m);
-            };
-            client.once('modalCreate', handler);
-            client.once('interactionModalCreate', handler);
+            });
         });
 
         await message.clickButton(spamButton.customId);
 
         const modal = await modalPromise;
 
-        // שלב 2 - שולח POST עם id ו-nonce
-        const sessionId = client.ws.shards.first()?.sessionId;
-        const modalId = generateSnowflake();
-        const nonce = generateSnowflake();
-
-        console.log(`[DEBUG] Session ID: ${sessionId}`);
-        console.log(`[DEBUG] Modal ID: ${modalId}`);
-        console.log(`[DEBUG] Nonce: ${nonce}`);
-
-        // ממפה את השדות לפי customId
-        const modalComponents = [];
+        // ממלא את השדות
         let fieldIndex = 0;
         for (const row of modal.components) {
-            const rowComps = [];
             for (const comp of row.components) {
-                let value = '';
-                if (fieldIndex === 0) value = phone;
-                else if (fieldIndex === 1) value = String(credits);
-                rowComps.push({
-                    type: 4,
-                    custom_id: comp.customId,
-                    value: value
-                });
-                fieldIndex++;
+                if (comp.type === 'TEXT_INPUT' || comp.type === 4) {
+                    if (fieldIndex === 0) {
+                        comp.setValue(phone);
+                        console.log(`[+] Set phone: ${phone}`);
+                    } else if (fieldIndex === 1) {
+                        comp.setValue(String(credits));
+                        console.log(`[+] Set credits: ${credits}`);
+                    }
+                    fieldIndex++;
+                }
             }
-            modalComponents.push({ type: 1, components: rowComps });
         }
 
-        // ה-payload עם id, nonce ו-session_id
-        const payload = {
-            id: modalId,
-            type: 5,
-            application_id: applicationId,
-            channel_id: CHANNEL_ID,
-            guild_id: GUILD_ID,
-            data: {
-                id: modalId,
-                custom_id: modal.customId,
-                components: modalComponents
-            },
-            session_id: sessionId,
-            nonce: nonce
-        };
+        // שולח את הטופס עם modal.reply()
+        console.log(`[DEBUG] Calling modal.reply()...`);
+        await modal.reply();
+        console.log(`[+] Modal replied successfully!`);
 
-        console.log(`[DEBUG] POST payload:`, JSON.stringify(payload, null, 2));
-
-        const response = await fetch('https://discord.com/api/v9/interactions', {
-            method: 'POST',
-            headers: {
-                'Authorization': TOKEN,
-                'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9173 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36',
-                'X-Super-Properties': Buffer.from(JSON.stringify({
-                    os: 'Windows',
-                    browser: 'Discord Client',
-                    release_channel: 'stable',
-                    client_version: '1.0.9173',
-                    os_version: '10.0.26100',
-                    os_arch: 'x64',
-                    system_locale: 'he-IL',
-                    client_build_number: 341295
-                })).toString('base64'),
-                'X-Discord-Locale': 'he-IL',
-                'X-Discord-Timezone': 'Asia/Jerusalem'
-            },
-            body: JSON.stringify(payload)
-        });
-
-        if (response.ok || response.status === 204) {
-            console.log(`[+] Direct POST successful!`);
-            return `✅ ספאם בוצע! ${phone} | ${credits}`;
-        } else {
-            const errText = await response.text();
-            console.log(`[-] POST failed: ${response.status} - ${errText}`);
-            return `❌ POST failed: ${response.status}`;
-        }
+        return `✅ ספאם בוצע! ${phone} | ${credits}`;
     } catch (e) {
         console.log(`[-] Error: ${e.message}`);
         return `❌ שגיאה: ${e.message}`;
