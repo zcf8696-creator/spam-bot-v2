@@ -57,7 +57,6 @@ async function doSpam(phone, credits) {
 
         console.log(`[+] Clicking Spam button...`);
 
-        // ממתין ל-modal עם השם הנכון של האירוע
         const modalPromise = new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error('Timeout - no modal')), 10000);
             client.once('interactionModalCreate', (m) => {
@@ -71,7 +70,6 @@ async function doSpam(phone, credits) {
 
         const modal = await modalPromise;
 
-        // ממלא את השדות
         let fieldIndex = 0;
         for (const row of modal.components) {
             for (const comp of row.components) {
@@ -88,7 +86,6 @@ async function doSpam(phone, credits) {
             }
         }
 
-        // שולח את הטופס עם modal.reply()
         console.log(`[DEBUG] Calling modal.reply()...`);
         await modal.reply();
         console.log(`[+] Modal replied successfully!`);
@@ -113,9 +110,12 @@ setInterval(async () => {
 
     for (const [name, sp] of Object.entries(spammers)) {
         if (!sp.enabled) continue;
+        if (sp.lastRun && Date.now() - sp.lastRun < 5 * 60 * 1000) continue;
         if (sp.hour === hour && sp.minute === minute) {
             console.log(`[+] Running spammer: ${name}`);
             await doSpam(sp.phone, sp.credits);
+            sp.lastRun = Date.now();
+            saveSpammers();
         }
     }
 }, 60000);
