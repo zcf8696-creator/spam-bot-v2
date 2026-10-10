@@ -11,7 +11,6 @@ const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
 
-// ---------- טעינת ספאמרים ----------
 function loadSpammers() {
     try {
         return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
@@ -25,16 +24,13 @@ function saveSpammers() {
 
 let spammers = loadSpammers();
 
-// ---------- HTTP server for Render ----------
 const app = express();
 app.get('/', (req, res) => res.send('OK'));
 app.get('/health', (req, res) => res.send('OK'));
 app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 
-// ---------- Discord client ----------
 const client = new Client({ checkUpdate: false });
 
-// ---------- Spam function ----------
 async function doSpam(phone, credits) {
     try {
         console.log(`[+] Spam: ${phone} | ${credits} credits`);
@@ -46,49 +42,66 @@ async function doSpam(phone, credits) {
         const message = await channel.messages.fetch(MESSAGE_ID);
         if (!message) return '❌ ההודעה לא נמצאה';
 
-        // מוצא את ה-customId של הכפתור Spam
-        let spamButtonId = null;
+        let spamButton = null;
         for (const row of message.components) {
             for (const comp of row.components) {
                 if (comp.label && comp.label.includes('Spam')) {
-                    spamButtonId = comp.customId;
+                    spamButton = comp;
                     break;
                 }
             }
-            if (spamButtonId) break;
+            if (spamButton) break;
         }
 
-        if (!spamButtonId) return '❌ הכפתור לא נמצא';
+        if (!spamButton) return '❌ הכפתור לא נמצא';
 
-        console.log(`[+] Clicking Spam button (ID: ${spamButtonId})...`);
+        console.log(`[+] Clicking Spam button...`);
 
-        // שולח את הלחיצה
-        await message.clickButton(spamButtonId);
-
-        // ממתין ל-modal
-        const modal = await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error('Timeout - no modal received')), 15000);
-
-            client.once('modalCreate', (m) => {
+        const modalPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Timeout')), 10000);
+            const handler = (m) => {
                 clearTimeout(timeout);
+                console.log(`[+] Modal received!`);
+                console.log(`[DEBUG] Modal structure:`, JSON.stringify({
+                    title: m.title,
+                    customId: m.customId,
+                    components: m.components?.map(row => ({
+                        type: row.type,
+                        components: row.components?.map(c => ({
+                            type: c.type,
+                            customId: c.customId,
+                            label: c.label,
+                            placeholder: c.placeholder
+                        }))
+                    }))
+                }, null, 2));
                 resolve(m);
-            });
+            };
+            client.once('modalCreate', handler);
+            client.once('interactionModalCreate', handler);
+            client.once('MODAL_CREATE', handler);
         });
 
-        console.log(`[+] Modal received`);
+        await message.clickButton(spamButton.customId);
 
-        // ממלא את השדות
+        const modal = await modalPromise;
+
+        let fieldIndex = 0;
         for (const row of modal.components) {
             for (const comp of row.components) {
-                if (comp.label && (comp.label.includes('Phone') || comp.label.toLowerCase().includes('phone'))) {
-                    comp.setValue(phone);
-                } else if (comp.label && (comp.label.includes('Credit') || comp.label.toLowerCase().includes('credit'))) {
-                    comp.setValue(String(credits));
+                if (comp.type === 'TEXT_INPUT' || comp.type === 4) {
+                    if (fieldIndex === 0) {
+                        comp.setValue(phone);
+                        console.log(`[+] Set phone: ${phone}`);
+                    } else if (fieldIndex === 1) {
+                        comp.setValue(String(credits));
+                        console.log(`[+] Set credits: ${credits}`);
+                    }
+                    fieldIndex++;
                 }
             }
         }
 
-        // שולח את הטופס
         await modal.submit();
         console.log(`[+] Modal submitted!`);
         return `✅ ספאם בוצע! ${phone} | ${credits}`;
@@ -98,7 +111,6 @@ async function doSpam(phone, credits) {
     }
 }
 
-// ---------- Scheduler (בודק כל דקה) ----------
 setInterval(async () => {
     const now = new Date();
     const tz = new Intl.DateTimeFormat('en-US', {
@@ -119,13 +131,11 @@ setInterval(async () => {
     }
 }, 60000);
 
-// ---------- on ready ----------
 client.on('ready', () => {
     console.log(`[+] Logged in as ${client.user.tag}`);
     console.log(`[+] Loaded ${Object.keys(spammers).length} spammers`);
 });
 
-// ---------- on message ----------
 client.on('messageCreate', async (message) => {
     if (message.author.id !== OWNER_ID) return;
 
@@ -237,5 +247,4 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// ---------- Start ----------
 client.login(TOKEN);
