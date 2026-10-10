@@ -6,6 +6,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const MESSAGE_ID = process.env.MESSAGE_ID;
+const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID;
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
@@ -111,7 +112,7 @@ setInterval(async () => {
             saveSpammers();
 
             try {
-                const channel = client.channels.cache.get(CHANNEL_ID);
+                const channel = client.channels.cache.get(COMMAND_CHANNEL_ID);
                 if (channel) {
                     await channel.send(`⏰ **ספאם מתוזמן:** \`${name}\`\n📱 ${sp.phone} | 💳 ${sp.credits}\n${result}`);
                 }
@@ -125,11 +126,14 @@ setInterval(async () => {
 client.on('ready', () => {
     console.log(`[+] Logged in as ${client.user.tag}`);
     console.log(`[+] Loaded ${Object.keys(spammers).length} spammers`);
+    console.log(`[+] Command channel: ${COMMAND_CHANNEL_ID}`);
 });
 
 client.on('messageCreate', async (message) => {
-    // מתעלם מהודעות של בוטים
     if (message.author.bot) return;
+
+    // מגיב רק בחדר שהוגדר
+    if (message.channel.id !== COMMAND_CHANNEL_ID) return;
 
     const content = message.content.trim();
     const parts = content.split(/\s+/);
@@ -140,7 +144,7 @@ client.on('messageCreate', async (message) => {
         const credits = parts[3];
         const hour = parseInt(parts[4]);
         const minute = parseInt(parts[5]);
-        spammers[name] = { phone, credits, hour, minute, enabled: true, owner: message.author.id };
+        spammers[name] = { phone, credits, hour, minute, enabled: true };
         saveSpammers();
         await message.channel.send(`✅ ספאמר \`${name}\` נוצר:\n📱 ${phone} | 💳 ${credits} | 🕐 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} | ✅ פעיל`);
     }
