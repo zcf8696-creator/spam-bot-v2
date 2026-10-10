@@ -1,4 +1,4 @@
-const { Client } = require('discord.js-selfbot-v13');
+const { Client, MessageButton, MessageActionRow, Modal, TextInputComponent } = require('discord.js-selfbot-v13');
 const fs = require('fs');
 const express = require('express');
 
@@ -11,7 +11,6 @@ const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
 
-// רשימת מאושרים - מופרד בפסיקים
 const ALLOWED_IDS = (OWNER_ID || '').split(',').map(id => id.trim()).filter(id => id);
 
 function loadSpammers() {
@@ -34,6 +33,7 @@ app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 
 const client = new Client({ checkUpdate: false });
 
+// ---------- Spam function ----------
 async function doSpam(phone, credits) {
     try {
         console.log(`[+] Spam: ${phone} | ${credits} credits`);
@@ -87,13 +87,38 @@ async function doSpam(phone, credits) {
         await modal.reply();
         console.log(`[+] Modal replied successfully!`);
 
-        return { success: true, message: `✅ ספאם בוצע! ${phone} | ${credits}`, channel };
+        return { success: true, message: `✅ ספאם בוצע! ${phone} | ${credits}` };
     } catch (e) {
         console.log(`[-] Error: ${e.message}`);
         return { success: false, message: `❌ שגיאה: ${e.message}` };
     }
 }
 
+// ---------- Setup panel ----------
+async function sendSetupPanel(channel) {
+    const row = new MessageActionRow()
+        .addComponents(
+            new MessageButton()
+                .setCustomId('create_spammer')
+                .setLabel('➕ צור ספאמר')
+                .setStyle('SUCCESS'),
+            new MessageButton()
+                .setCustomId('list_spammers')
+                .setLabel('📋 רשימה')
+                .setStyle('PRIMARY'),
+            new MessageButton()
+                .setCustomId('run_now')
+                .setLabel('🚀 הפעל עכשיו')
+                .setStyle('DANGER')
+        );
+
+    await channel.send({
+        content: '**🤖 פאנל ספאמר**\n\nלחץ על הכפתורים למטה:',
+        components: [row]
+    });
+}
+
+// ---------- Scheduler ----------
 setInterval(async () => {
     const now = new Date();
     const tz = new Intl.DateTimeFormat('en-US', {
@@ -114,53 +139,45 @@ setInterval(async () => {
             sp.lastRun = Date.now();
             saveSpammers();
 
-            // שולח הודעה לחדר
             try {
                 const channel = client.channels.cache.get(CHANNEL_ID);
                 if (channel) {
                     await channel.send(`⏰ **ספאם מתוזמן:** \`${name}\`\n📱 ${sp.phone} | 💳 ${sp.credits}\n${result.message}`);
                 }
             } catch (e) {
-                console.log(`[-] Failed to send notification: ${e.message}`);
+                console.log(`[-] Notification error: ${e.message}`);
             }
         }
     }
 }, 60000);
 
+// ---------- on ready ----------
 client.on('ready', () => {
     console.log(`[+] Logged in as ${client.user.tag}`);
     console.log(`[+] Loaded ${Object.keys(spammers).length} spammers`);
     console.log(`[+] Authorized users: ${ALLOWED_IDS.join(', ')}`);
 });
 
+// ---------- on message ----------
 client.on('messageCreate', async (message) => {
     if (!ALLOWED_IDS.includes(message.author.id)) return;
 
     const content = message.content.trim();
-    const parts = content.split(/\s+/);
 
-    if (content.startsWith('!add ') && parts.length >= 6) {
-        const name = parts[1];
-        const phone = parts[2];
-        const credits = parts[3];
-        const hour = parseInt(parts[4]);
-        const minute = parseInt(parts[5]);
-        spammers[name] = { phone, credits, hour, minute, enabled: true };
-        saveSpammers();
-        await message.channel.send(`✅ ספאמר \`${name}\` נוצר:\n📱 ${phone} | 💳 ${credits} | 🕐 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} | ✅ פעיל`);
+    if (content === '!setup') {
+        await sendSetupPanel(message.channel);
     }
-
-    else if (content.startsWith('!remove ') && parts.length >= 2) {
-        const name = parts[1];
-        if (spammers[name]) {
-            delete spammers[name];
-            saveSpammers();
-            await message.channel.send(`🗑️ ספאמר \`${name}\` נמחק`);
-        } else {
-            await message.channel.send(`❌ לא נמצא`);
-        }
+    else if (content === '!help') {
+        await message.channel.send(
+            '**🤖 פקודות:**\n\n' +
+            '`!setup` — שלח פאנל כפתורים\n' +
+            '`!list` — הצג את כל הספאמרים\n' +
+            '`!now <שם>` — בצע ספאמר עכשיו\n' +
+            '`!remove <שם>` — מחק ספאמר\n' +
+            '`!enable <שם>` — הפעל\n' +
+            '`!disable <שם>` — כבה'
+        );
     }
-
     else if (content === '!list') {
         if (Object.keys(spammers).length === 0) {
             await message.channel.send('📭 אין ספאמרים');
@@ -173,29 +190,10 @@ client.on('messageCreate', async (message) => {
         }
         await message.channel.send(msg);
     }
-
-    else if (content.startsWith('!enable ') && parts.length >= 2) {
-        const name = parts[1];
-        if (spammers[name]) {
-            spammers[name].enabled = true;
-            saveSpammers();
-            await message.channel.send(`✅ \`${name}\` הופעל`);
-        }
-    }
-
-    else if (content.startsWith('!disable ') && parts.length >= 2) {
-        const name = parts[1];
-        if (spammers[name]) {
-            spammers[name].enabled = false;
-            saveSpammers();
-            await message.channel.send(`❌ \`${name}\` כובה`);
-        }
-    }
-
-    else if (content.startsWith('!now ') && parts.length >= 2) {
-        const name = parts[1];
+    else if (content.startsWith('!now ') && content.length > 5) {
+        const name = content.substring(5).trim();
         if (!spammers[name]) {
-            await message.channel.send(`❌ לא נמצא`);
+            await message.channel.send(`❌ \`${name}\` לא נמצא`);
             return;
         }
         const sp = spammers[name];
@@ -203,44 +201,182 @@ client.on('messageCreate', async (message) => {
         const result = await doSpam(sp.phone, sp.credits);
         await message.channel.send(result.message);
     }
-
-    else if (content.startsWith('!set ') && parts.length >= 4) {
-        const name = parts[1];
-        const field = parts[2];
-        const value = parts[3];
-        if (!spammers[name]) {
-            await message.channel.send(`❌ לא נמצא`);
-            return;
-        }
-        if (field === 'phone') {
-            spammers[name].phone = value;
+    else if (content.startsWith('!remove ') && content.length > 8) {
+        const name = content.substring(8).trim();
+        if (spammers[name]) {
+            delete spammers[name];
             saveSpammers();
-            await message.channel.send(`✅ \`${name}\` — טלפון: \`${value}\``);
-        } else if (field === 'credits') {
-            spammers[name].credits = value;
-            saveSpammers();
-            await message.channel.send(`✅ \`${name}\` — קרדיטים: \`${value}\``);
-        } else if (field === 'time' && parts.length >= 5) {
-            spammers[name].hour = parseInt(value);
-            spammers[name].minute = parseInt(parts[4]);
-            saveSpammers();
-            await message.channel.send(`✅ \`${name}\` — שעה: \`${String(spammers[name].hour).padStart(2, '0')}:${String(spammers[name].minute).padStart(2, '0')}\``);
+            await message.channel.send(`🗑️ \`${name}\` נמחק`);
+        } else {
+            await message.channel.send(`❌ \`${name}\` לא נמצא`);
         }
     }
+    else if (content.startsWith('!enable ') && content.length > 8) {
+        const name = content.substring(8).trim();
+        if (spammers[name]) {
+            spammers[name].enabled = true;
+            saveSpammers();
+            await message.channel.send(`✅ \`${name}\` הופעל`);
+        }
+    }
+    else if (content.startsWith('!disable ') && content.length > 9) {
+        const name = content.substring(9).trim();
+        if (spammers[name]) {
+            spammers[name].enabled = false;
+            saveSpammers();
+            await message.channel.send(`❌ \`${name}\` כובה`);
+        }
+    }
+});
 
-    else if (content === '!help') {
-        const help = '**🤖 פקודות:**\n\n' +
-            '`!add <שם> <טלפון> <קרדיטים> <שעה> <דקה>` — צור ספאמר\n' +
-            '`!remove <שם>` — מחק\n' +
-            '`!list` — הצג\n' +
-            '`!enable <שם>` — הפעל\n' +
-            '`!disable <שם>` — כבה\n' +
-            '`!now <שם>` — בצע עכשיו\n' +
-            '`!set <שם> phone <מספר>`\n' +
-            '`!set <שם> credits <כמות>`\n' +
-            '`!set <שם> time <שעה> <דקה>`\n\n' +
-            '**דוגמה:**\n`!add spam1 0501234567 5 7 30`';
-        await message.channel.send(help);
+// ---------- Button interactions ----------
+client.on('interactionButtonCreate', async (interaction) => {
+    if (!ALLOWED_IDS.includes(interaction.user.id)) return;
+
+    // Create spammer - show modal
+    if (interaction.customId === 'create_spammer') {
+        const modal = new Modal()
+            .setCustomId('new_spammer_modal')
+            .setTitle('צור ספאמר חדש');
+
+        const nameInput = new TextInputComponent()
+            .setCustomId('name')
+            .setLabel('שם הספאמר')
+            .setStyle('SHORT')
+            .setRequired(true)
+            .setMaxLength(20);
+
+        const phoneInput = new TextInputComponent()
+            .setCustomId('phone')
+            .setLabel('מספר טלפון')
+            .setStyle('SHORT')
+            .setRequired(true)
+            .setMaxLength(15);
+
+        const creditsInput = new TextInputComponent()
+            .setCustomId('credits')
+            .setLabel('כמות קרדיטים')
+            .setStyle('SHORT')
+            .setRequired(true)
+            .setMaxLength(5);
+
+        const hourInput = new TextInputComponent()
+            .setCustomId('hour')
+            .setLabel('שעה (0-23)')
+            .setStyle('SHORT')
+            .setRequired(true)
+            .setMaxLength(2);
+
+        const minuteInput = new TextInputComponent()
+            .setCustomId('minute')
+            .setLabel('דקה (0-59)')
+            .setStyle('SHORT')
+            .setRequired(true)
+            .setMaxLength(2);
+
+        const row1 = new MessageActionRow().addComponents(nameInput);
+        const row2 = new MessageActionRow().addComponents(phoneInput);
+        const row3 = new MessageActionRow().addComponents(creditsInput);
+        const row4 = new MessageActionRow().addComponents(hourInput);
+        const row5 = new MessageActionRow().addComponents(minuteInput);
+
+        modal.addComponents(row1, row2, row3, row4, row5);
+
+        await interaction.showModal(modal);
+    }
+
+    // List spammers
+    else if (interaction.customId === 'list_spammers') {
+        if (Object.keys(spammers).length === 0) {
+            await interaction.reply({ content: '📭 אין ספאמרים', ephemeral: true });
+            return;
+        }
+        let msg = '**📋 רשימת ספאמרים:**\n\n';
+        for (const [name, sp] of Object.entries(spammers)) {
+            const status = sp.enabled ? '✅' : '❌';
+            msg += `**${name}** ${status}\n  📱 ${sp.phone} | 💳 ${sp.credits} | 🕐 ${String(sp.hour).padStart(2, '0')}:${String(sp.minute).padStart(2, '0')}\n\n`;
+        }
+        await interaction.reply({ content: msg, ephemeral: true });
+    }
+
+    // Run now - show modal to choose spammer
+    else if (interaction.customId === 'run_now') {
+        if (Object.keys(spammers).length === 0) {
+            await interaction.reply({ content: '📭 אין ספאמרים להריץ', ephemeral: true });
+            return;
+        }
+
+        const modal = new Modal()
+            .setCustomId('run_now_modal')
+            .setTitle('הפעל ספאמר עכשיו');
+
+        const nameInput = new TextInputComponent()
+            .setCustomId('name')
+            .setLabel('שם הספאמר להרצה')
+            .setStyle('SHORT')
+            .setRequired(true)
+            .setMaxLength(20);
+
+        const row1 = new MessageActionRow().addComponents(nameInput);
+        modal.addComponents(row1);
+
+        await interaction.showModal(modal);
+    }
+});
+
+// ---------- Modal submit ----------
+client.on('interactionModalSubmit', async (interaction) => {
+    if (!ALLOWED_IDS.includes(interaction.user.id)) return;
+
+    // New spammer created
+    if (interaction.customId === 'new_spammer_modal') {
+        const fields = {};
+        for (const row of interaction.components) {
+            for (const comp of row.components) {
+                fields[comp.customId] = comp.value;
+            }
+        }
+
+        const name = fields.name;
+        const phone = fields.phone;
+        const credits = fields.credits;
+        const hour = parseInt(fields.hour);
+        const minute = parseInt(fields.minute);
+
+        if (isNaN(hour) || hour < 0 || hour > 23 || isNaN(minute) || minute < 0 || minute > 59) {
+            await interaction.reply({ content: '❌ שעה או דקה לא תקינות', ephemeral: true });
+            return;
+        }
+
+        spammers[name] = { phone, credits, hour, minute, enabled: true };
+        saveSpammers();
+
+        await interaction.reply({
+            content: `✅ ספאמר \`${name}\` נוצר בהצלחה!\n📱 ${phone}\n💳 ${credits}\n🕐 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+            ephemeral: true
+        });
+
+        console.log(`[+] Created spammer: ${name}`);
+    }
+
+    // Run now
+    else if (interaction.customId === 'run_now_modal') {
+        const name = interaction.components[0].components[0].value;
+
+        if (!spammers[name]) {
+            await interaction.reply({ content: `❌ \`${name}\` לא נמצא`, ephemeral: true });
+            return;
+        }
+
+        await interaction.reply({ content: `🚀 מבצע \`${name}\`...`, ephemeral: true });
+
+        const sp = spammers[name];
+        const result = await doSpam(sp.phone, sp.credits);
+
+        const channel = client.channels.cache.get(CHANNEL_ID);
+        if (channel) {
+            await channel.send(`🚀 **הרצה ידנית:** \`${name}\`\n${result.message}`);
+        }
     }
 });
 
