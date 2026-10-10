@@ -62,49 +62,105 @@ async function doSpam(phone, credits) {
             const handler = (m) => {
                 clearTimeout(timeout);
                 console.log(`[+] Modal received!`);
-                console.log(`[DEBUG] Modal structure:`, JSON.stringify({
-                    title: m.title,
-                    customId: m.customId,
-                    components: m.components?.map(row => ({
-                        type: row.type,
-                        components: row.components?.map(c => ({
-                            type: c.type,
-                            customId: c.customId,
-                            label: c.label,
-                            placeholder: c.placeholder
-                        }))
-                    }))
-                }, null, 2));
                 resolve(m);
             };
             client.once('modalCreate', handler);
             client.once('interactionModalCreate', handler);
-            client.once('MODAL_CREATE', handler);
         });
 
         await message.clickButton(spamButton.customId);
 
         const modal = await modalPromise;
 
+        // ממלא שדות
         let fieldIndex = 0;
         for (const row of modal.components) {
             for (const comp of row.components) {
                 if (comp.type === 'TEXT_INPUT' || comp.type === 4) {
-                    if (fieldIndex === 0) {
-                        comp.setValue(phone);
-                        console.log(`[+] Set phone: ${phone}`);
-                    } else if (fieldIndex === 1) {
-                        comp.setValue(String(credits));
-                        console.log(`[+] Set credits: ${credits}`);
-                    }
+                    if (fieldIndex === 0) comp.setValue(phone);
+                    else if (fieldIndex === 1) comp.setValue(String(credits));
                     fieldIndex++;
                 }
             }
         }
 
-        await modal.submit();
-        console.log(`[+] Modal submitted!`);
-        return `✅ ספאם בוצע! ${phone} | ${credits}`;
+        // מנסה לשלוח את ה-modal בכמה דרכים
+        console.log(`[DEBUG] Trying to submit modal...`);
+        console.log(`[DEBUG] Modal customId: ${modal.customId}`);
+        console.log(`[DEBUG] Modal title: ${modal.title}`);
+
+        // מציג את כל השיטות הזמינות
+        const allMethods = [];
+        let obj = modal;
+        while (obj && obj !== Object.prototype) {
+            allMethods.push(...Object.getOwnPropertyNames(obj).filter(n => typeof modal[n] === 'function'));
+            obj = Object.getPrototypeOf(obj);
+        }
+        console.log(`[DEBUG] Available methods:`, [...new Set(allMethods)].join(', '));
+
+        try {
+            if (typeof modal.submit === 'function') {
+                await modal.submit();
+                console.log(`[+] modal.submit() worked`);
+                return `✅ ספאם בוצע! ${phone} | ${credits}`;
+            }
+            if (typeof modal.send === 'function') {
+                await modal.send();
+                console.log(`[+] modal.send() worked`);
+                return `✅ ספאם בוצע! ${phone} | ${credits}`;
+            }
+            if (typeof modal.respond === 'function') {
+                await modal.respond();
+                console.log(`[+] modal.respond() worked`);
+                return `✅ ספאם בוצע! ${phone} | ${credits}`;
+            }
+            if (modal.interaction && typeof modal.interaction.submit === 'function') {
+                await modal.interaction.submit();
+                console.log(`[+] modal.interaction.submit() worked`);
+                return `✅ ספאם בוצע! ${phone} | ${credits}`;
+            }
+
+            // ניסיון אחרון - POST ישירות ל-API של דיסקורד
+            console.log(`[DEBUG] Trying direct POST to Discord API...`);
+
+            const payload = {
+                type: 5,
+                data: {
+                    custom_id: modal.customId,
+                    components: modal.components.map(row => ({
+                        type: 1,
+                        components: row.components.map((comp, i) => ({
+                            type: 4,
+                            custom_id: comp.customId,
+                            value: i === 0 ? phone : String(credits)
+                        }))
+                    }))
+                }
+            };
+
+            console.log(`[DEBUG] POST payload:`, JSON.stringify(payload));
+
+            const response = await fetch('https://discord.com/api/v9/interactions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': TOKEN,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                console.log(`[+] Direct POST successful!`);
+                return `✅ ספאם בוצע! ${phone} | ${credits}`;
+            } else {
+                const errText = await response.text();
+                console.log(`[-] POST failed: ${response.status} - ${errText}`);
+                return `❌ POST failed: ${response.status}`;
+            }
+        } catch (submitError) {
+            console.log(`[-] Submit error: ${submitError.message}`);
+            return `❌ שגיאה בשליחה: ${submitError.message}`;
+        }
     } catch (e) {
         console.log(`[-] Error: ${e.message}`);
         return `❌ שגיאה: ${e.message}`;
