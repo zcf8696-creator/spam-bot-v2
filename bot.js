@@ -6,12 +6,9 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const MESSAGE_ID = process.env.MESSAGE_ID;
-const OWNER_ID = process.env.OWNER_ID;
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
-
-const ALLOWED_IDS = (OWNER_ID || '').split(',').map(id => id.trim()).filter(id => id);
 
 function loadSpammers() {
     try {
@@ -37,12 +34,12 @@ async function doSpam(phone, credits) {
     try {
         console.log(`[+] Spam: ${phone} | ${credits} credits`);
         const guild = client.guilds.cache.get(GUILD_ID);
-        if (!guild) return { success: false, message: '❌ השרת לא נמצא' };
+        if (!guild) return '❌ השרת לא נמצא';
         const channel = guild.channels.cache.get(CHANNEL_ID);
-        if (!channel) return { success: false, message: '❌ החדר לא נמצא' };
+        if (!channel) return '❌ החדר לא נמצא';
 
         const message = await channel.messages.fetch(MESSAGE_ID);
-        if (!message) return { success: false, message: '❌ ההודעה לא נמצאה' };
+        if (!message) return '❌ ההודעה לא נמצאה';
 
         let spamButton = null;
         for (const row of message.components) {
@@ -55,7 +52,7 @@ async function doSpam(phone, credits) {
             if (spamButton) break;
         }
 
-        if (!spamButton) return { success: false, message: '❌ הכפתור לא נמצא' };
+        if (!spamButton) return '❌ הכפתור לא נמצא';
 
         console.log(`[+] Clicking Spam button...`);
 
@@ -86,10 +83,10 @@ async function doSpam(phone, credits) {
         await modal.reply();
         console.log(`[+] Modal replied successfully!`);
 
-        return { success: true, message: `✅ ספאם בוצע! ${phone} | ${credits}` };
+        return `✅ ספאם בוצע! ${phone} | ${credits}`;
     } catch (e) {
         console.log(`[-] Error: ${e.message}`);
-        return { success: false, message: `❌ שגיאה: ${e.message}` };
+        return `❌ שגיאה: ${e.message}`;
     }
 }
 
@@ -116,7 +113,7 @@ setInterval(async () => {
             try {
                 const channel = client.channels.cache.get(CHANNEL_ID);
                 if (channel) {
-                    await channel.send(`⏰ **ספאם מתוזמן:** \`${name}\`\n📱 ${sp.phone} | 💳 ${sp.credits}\n${result.message}`);
+                    await channel.send(`⏰ **ספאם מתוזמן:** \`${name}\`\n📱 ${sp.phone} | 💳 ${sp.credits}\n${result}`);
                 }
             } catch (e) {
                 console.log(`[-] Notification error: ${e.message}`);
@@ -131,7 +128,8 @@ client.on('ready', () => {
 });
 
 client.on('messageCreate', async (message) => {
-    if (!ALLOWED_IDS.includes(message.author.id)) return;
+    // מתעלם מהודעות של בוטים
+    if (message.author.bot) return;
 
     const content = message.content.trim();
     const parts = content.split(/\s+/);
@@ -142,7 +140,7 @@ client.on('messageCreate', async (message) => {
         const credits = parts[3];
         const hour = parseInt(parts[4]);
         const minute = parseInt(parts[5]);
-        spammers[name] = { phone, credits, hour, minute, enabled: true };
+        spammers[name] = { phone, credits, hour, minute, enabled: true, owner: message.author.id };
         saveSpammers();
         await message.channel.send(`✅ ספאמר \`${name}\` נוצר:\n📱 ${phone} | 💳 ${credits} | 🕐 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} | ✅ פעיל`);
     }
@@ -198,7 +196,7 @@ client.on('messageCreate', async (message) => {
         const sp = spammers[name];
         await message.channel.send(`🚀 מבצע \`${name}\`...`);
         const result = await doSpam(sp.phone, sp.credits);
-        await message.channel.send(result.message);
+        await message.channel.send(result);
     }
 
     else if (content.startsWith('!set ') && parts.length >= 4) {
@@ -225,118 +223,19 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // ========== פאנל עם אימוג'ים ==========
-    else if (content === '!panel') {
-        const msg = await message.channel.send(
-            '**🤖 פאנל ספאמר**\n\n' +
-            'הגב עם האימוג\'י המתאים:\n\n' +
-            '➕ — צור ספאמר חדש\n' +
-            '📋 — הצג רשימה\n' +
-            '🚀 — הפעל ספאמר עכשיו\n' +
-            '🗑️ — מחק ספאמר\n' +
-            '❓ — עזרה'
-        );
-
-        await msg.react('➕');
-        await new Promise(r => setTimeout(r, 500));
-        await msg.react('📋');
-        await new Promise(r => setTimeout(r, 500));
-        await msg.react('🚀');
-        await new Promise(r => setTimeout(r, 500));
-        await msg.react('🗑️');
-        await new Promise(r => setTimeout(r, 500));
-        await msg.react('❓');
-    }
-
-    else if (content === '!help' || content === '!commands') {
-        await message.channel.send(
-            '**🤖 פקודות:**\n\n' +
-            '`!panel` — שלח פאנל עם אימוג\'ים\n' +
+    else if (content === '!help') {
+        const help = '**🤖 פקודות:**\n\n' +
             '`!add <שם> <טלפון> <קרדיטים> <שעה> <דקה>` — צור ספאמר\n' +
             '`!remove <שם>` — מחק\n' +
-            '`!list` — הצג את כל הספאמרים\n' +
+            '`!list` — הצג\n' +
             '`!enable <שם>` — הפעל\n' +
             '`!disable <שם>` — כבה\n' +
             '`!now <שם>` — בצע עכשיו\n' +
             '`!set <שם> phone <מספר>` — עדכן טלפון\n' +
             '`!set <שם> credits <כמות>` — עדכן קרדיטים\n' +
-            '`!set <שם> time <שעה> <דקה>` — עדכן שעה'
-        );
-    }
-});
-
-// ========== טיפול באימוג'ים ==========
-client.on('messageReactionAdd', async (reaction, user) => {
-    if (!ALLOWED_IDS.includes(user.id)) return;
-    if (reaction.message.author.id !== client.user.id) return;
-    if (!reaction.message.content || !reaction.message.content.includes('פאנל ספאמר')) return;
-
-    const emoji = reaction.emoji.name;
-
-    try {
-        // ➕ צור ספאמר
-        if (emoji === '➕') {
-            const channel = reaction.message.channel;
-            await channel.send(
-                '**➕ צור ספאמר חדש**\n\n' +
-                'שלח את הפרטים בפורמט הזה:\n\n' +
-                '`!add <שם> <טלפון> <קרדיטים> <שעה> <דקה>`\n\n' +
-                'דוגמה:\n' +
-                '`!add spam1 0501234567 5 14 30`'
-            );
-        }
-        // 📋 רשימה
-        else if (emoji === '📋') {
-            const channel = reaction.message.channel;
-            if (Object.keys(spammers).length === 0) {
-                await channel.send('📭 אין ספאמרים');
-                return;
-            }
-            let msg = '**📋 רשימת ספאמרים:**\n\n';
-            for (const [name, sp] of Object.entries(spammers)) {
-                const status = sp.enabled ? '✅' : '❌';
-                msg += `**${name}** ${status}\n  📱 ${sp.phone} | 💳 ${sp.credits} | 🕐 ${String(sp.hour).padStart(2, '0')}:${String(sp.minute).padStart(2, '0')}\n\n`;
-            }
-            await channel.send(msg);
-        }
-        // 🚀 הפעל
-        else if (emoji === '🚀') {
-            const channel = reaction.message.channel;
-            await channel.send(
-                '**🚀 הפעל ספאמר עכשיו**\n\n' +
-                'שלח:\n' +
-                '`!now <שם>`\n\n' +
-                'דוגמה: `!now spam1`'
-            );
-        }
-        // 🗑️ מחק
-        else if (emoji === '🗑️') {
-            const channel = reaction.message.channel;
-            await channel.send(
-                '**🗑️ מחק ספאמר**\n\n' +
-                'שלח:\n' +
-                '`!remove <שם>`\n\n' +
-                'דוגמה: `!remove spam1`'
-            );
-        }
-        // ❓ עזרה
-        else if (emoji === '❓') {
-            const channel = reaction.message.channel;
-            await channel.send(
-                '**🤖 פקודות:**\n\n' +
-                '`!add <שם> <טלפון> <קרדיטים> <שעה> <דקה>`\n' +
-                '`!remove <שם>` — מחק\n' +
-                '`!list` — הצג\n' +
-                '`!enable <שם>` — הפעל\n' +
-                '`!disable <שם>` — כבה\n' +
-                '`!now <שם>` — בצע עכשיו'
-            );
-        }
-
-        // מסיר את התגובה
-        await reaction.users.remove(user.id);
-    } catch (e) {
-        console.log(`[-] Reaction error: ${e.message}`);
+            '`!set <שם> time <שעה> <דקה>` — עדכן שעה\n\n' +
+            '**דוגמה:**\n`!add spam1 0501234567 5 7 30`';
+        await message.channel.send(help);
     }
 });
 
