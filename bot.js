@@ -91,9 +91,10 @@ async function doSpam(phone, credits) {
     }
 }
 
-// ========== פונקציה למחיקת הודעות הבוט ==========
-async function purgeBotMessages(channel) {
-    let deleted = 0;
+// ========== פונקציה למחיקת הודעות ==========
+async function purgeMessages(channel) {
+    let deletedBot = 0;
+    let deletedUser = 0;
     let lastId = null;
 
     while (true) {
@@ -103,14 +104,22 @@ async function purgeBotMessages(channel) {
         const messages = await channel.messages.fetch(options);
         if (messages.size === 0) break;
 
-        const botMessages = messages.filter(m => m.author.id === client.user.id);
-
-        for (const [id, msg] of botMessages) {
+        for (const [id, msg] of messages) {
             try {
-                await msg.delete();
-                deleted++;
-                console.log(`[+] Deleted message ${id}`);
-                await new Promise(r => setTimeout(r, 500)); // מונע rate limit
+                // מוחק הודעות של הבוט
+                if (msg.author.id === client.user.id) {
+                    await msg.delete();
+                    deletedBot++;
+                    console.log(`[+] Deleted bot message ${id}`);
+                    await new Promise(r => setTimeout(r, 500));
+                }
+                // מוחק הודעות של המשתמש (פקודות)
+                else if (msg.content.startsWith('!')) {
+                    await msg.delete();
+                    deletedUser++;
+                    console.log(`[+] Deleted user command ${id}`);
+                    await new Promise(r => setTimeout(r, 500));
+                }
             } catch (e) {
                 console.log(`[-] Failed to delete ${id}: ${e.message}`);
             }
@@ -120,7 +129,7 @@ async function purgeBotMessages(channel) {
         if (messages.size < 100) break;
     }
 
-    return deleted;
+    return { deletedBot, deletedUser };
 }
 
 setInterval(async () => {
@@ -259,14 +268,13 @@ client.on('messageCreate', async (message) => {
 
     // ========== פקודת מחיקה ==========
     else if (content === '!purge' || content === '!clear') {
-        const notification = await message.channel.send('🧹 מוחק את כל ההודעות של הבוט...');
+        const notification = await message.channel.send('🧹 מוחק הודעות...');
 
-        // ממתין קצת שההודעה תישלח
         await new Promise(r => setTimeout(r, 1000));
 
-        const deleted = await purgeBotMessages(message.channel);
+        const { deletedBot, deletedUser } = await purgeMessages(message.channel);
 
-        await notification.edit(`✅ נמחקו **${deleted}** הודעות של הבוט.`);
+        await notification.edit(`✅ נמחקו:\n🤖 **${deletedBot}** הודעות של הבוט\n👤 **${deletedUser}** פקודות שלך`);
     }
 
     else if (content === '!help') {
@@ -280,7 +288,7 @@ client.on('messageCreate', async (message) => {
             '`!set <שם> phone <מספר>` — עדכן טלפון\n' +
             '`!set <שם> credits <כמות>` — עדכן קרדיטים\n' +
             '`!set <שם> time <שעה> <דקה>` — עדכן שעה\n' +
-            '`!purge` — מחק את כל ההודעות של הבוט\n\n' +
+            '`!purge` — מחק את כל ההודעות של הבוט **והפקודות שלך**\n\n' +
             '**דוגמה:**\n`!add spam1 0501234567 5 7 30`';
         await message.channel.send(help);
     }
