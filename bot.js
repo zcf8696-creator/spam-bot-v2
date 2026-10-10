@@ -46,51 +46,52 @@ async function doSpam(phone, credits) {
         const message = await channel.messages.fetch(MESSAGE_ID);
         if (!message) return '❌ ההודעה לא נמצאה';
 
-        // מוצא את הכפתור Spam
-        let spamButton = null;
+        // מוצא את ה-customId של הכפתור Spam
+        let spamButtonId = null;
         for (const row of message.components) {
             for (const comp of row.components) {
                 if (comp.label && comp.label.includes('Spam')) {
-                    spamButton = comp;
+                    spamButtonId = comp.customId;
                     break;
                 }
             }
-            if (spamButton) break;
+            if (spamButtonId) break;
         }
 
-        if (!spamButton) return '❌ הכפתור לא נמצא';
+        if (!spamButtonId) return '❌ הכפתור לא נמצא';
 
-        console.log(`[+] Clicking Spam button...`);
+        console.log(`[+] Clicking Spam button (ID: ${spamButtonId})...`);
+
+        // שולח את הלחיצה
+        await message.clickButton(spamButtonId);
 
         // ממתין ל-modal
-        const modalPromise = new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error('timeout')), 15000);
+        const modal = await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Timeout - no modal received')), 15000);
 
-            client.once('modalCreate', async (modal) => {
+            client.once('modalCreate', (m) => {
                 clearTimeout(timeout);
-                try {
-                    // ממלא את השדות
-                    for (const row of modal.components) {
-                        for (const comp of row.components) {
-                            if (comp.label && (comp.label.includes('Phone') || comp.label.toLowerCase().includes('phone'))) {
-                                comp.setValue(phone);
-                            } else if (comp.label && (comp.label.includes('Credit') || comp.label.toLowerCase().includes('credit'))) {
-                                comp.setValue(String(credits));
-                            }
-                        }
-                    }
-                    await modal.submit();
-                    resolve('✅ ספאם בוצע! ' + phone + ' | ' + credits);
-                } catch (e) {
-                    reject(e);
-                }
+                resolve(m);
             });
         });
 
-        await spamButton.click();
+        console.log(`[+] Modal received`);
 
-        const result = await modalPromise;
-        return result;
+        // ממלא את השדות
+        for (const row of modal.components) {
+            for (const comp of row.components) {
+                if (comp.label && (comp.label.includes('Phone') || comp.label.toLowerCase().includes('phone'))) {
+                    comp.setValue(phone);
+                } else if (comp.label && (comp.label.includes('Credit') || comp.label.toLowerCase().includes('credit'))) {
+                    comp.setValue(String(credits));
+                }
+            }
+        }
+
+        // שולח את הטופס
+        await modal.submit();
+        console.log(`[+] Modal submitted!`);
+        return `✅ ספאם בוצע! ${phone} | ${credits}`;
     } catch (e) {
         console.log(`[-] Error: ${e.message}`);
         return `❌ שגיאה: ${e.message}`;
