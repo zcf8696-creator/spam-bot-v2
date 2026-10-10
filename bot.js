@@ -11,6 +11,9 @@ const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
 
+// רשימת מאושרים - מופרד בפסיקים
+const ALLOWED_IDS = (OWNER_ID || '').split(',').map(id => id.trim()).filter(id => id);
+
 function loadSpammers() {
     try {
         return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
@@ -35,12 +38,12 @@ async function doSpam(phone, credits) {
     try {
         console.log(`[+] Spam: ${phone} | ${credits} credits`);
         const guild = client.guilds.cache.get(GUILD_ID);
-        if (!guild) return '❌ השרת לא נמצא';
+        if (!guild) return { success: false, message: '❌ השרת לא נמצא' };
         const channel = guild.channels.cache.get(CHANNEL_ID);
-        if (!channel) return '❌ החדר לא נמצא';
+        if (!channel) return { success: false, message: '❌ החדר לא נמצא' };
 
         const message = await channel.messages.fetch(MESSAGE_ID);
-        if (!message) return '❌ ההודעה לא נמצאה';
+        if (!message) return { success: false, message: '❌ ההודעה לא נמצאה' };
 
         let spamButton = null;
         for (const row of message.components) {
@@ -53,7 +56,7 @@ async function doSpam(phone, credits) {
             if (spamButton) break;
         }
 
-        if (!spamButton) return '❌ הכפתור לא נמצא';
+        if (!spamButton) return { success: false, message: '❌ הכפתור לא נמצא' };
 
         console.log(`[+] Clicking Spam button...`);
 
@@ -61,7 +64,7 @@ async function doSpam(phone, credits) {
             const timeout = setTimeout(() => reject(new Error('Timeout - no modal')), 10000);
             client.once('interactionModalCreate', (m) => {
                 clearTimeout(timeout);
-                console.log(`[+] Modal received! customId: ${m.customId}`);
+                console.log(`[+] Modal received!`);
                 resolve(m);
             });
         });
@@ -74,26 +77,20 @@ async function doSpam(phone, credits) {
         for (const row of modal.components) {
             for (const comp of row.components) {
                 if (comp.type === 'TEXT_INPUT' || comp.type === 4) {
-                    if (fieldIndex === 0) {
-                        comp.setValue(phone);
-                        console.log(`[+] Set phone: ${phone}`);
-                    } else if (fieldIndex === 1) {
-                        comp.setValue(String(credits));
-                        console.log(`[+] Set credits: ${credits}`);
-                    }
+                    if (fieldIndex === 0) comp.setValue(phone);
+                    else if (fieldIndex === 1) comp.setValue(String(credits));
                     fieldIndex++;
                 }
             }
         }
 
-        console.log(`[DEBUG] Calling modal.reply()...`);
         await modal.reply();
         console.log(`[+] Modal replied successfully!`);
 
-        return `✅ ספאם בוצע! ${phone} | ${credits}`;
+        return { success: true, message: `✅ ספאם בוצע! ${phone} | ${credits}`, channel };
     } catch (e) {
         console.log(`[-] Error: ${e.message}`);
-        return `❌ שגיאה: ${e.message}`;
+        return { success: false, message: `❌ שגיאה: ${e.message}` };
     }
 }
 
@@ -113,9 +110,19 @@ setInterval(async () => {
         if (sp.lastRun && Date.now() - sp.lastRun < 5 * 60 * 1000) continue;
         if (sp.hour === hour && sp.minute === minute) {
             console.log(`[+] Running spammer: ${name}`);
-            await doSpam(sp.phone, sp.credits);
+            const result = await doSpam(sp.phone, sp.credits);
             sp.lastRun = Date.now();
             saveSpammers();
+
+            // שולח הודעה לחדר
+            try {
+                const channel = client.channels.cache.get(CHANNEL_ID);
+                if (channel) {
+                    await channel.send(`⏰ **ספאם מתוזמן:** \`${name}\`\n📱 ${sp.phone} | 💳 ${sp.credits}\n${result.message}`);
+                }
+            } catch (e) {
+                console.log(`[-] Failed to send notification: ${e.message}`);
+            }
         }
     }
 }, 60000);
@@ -123,10 +130,11 @@ setInterval(async () => {
 client.on('ready', () => {
     console.log(`[+] Logged in as ${client.user.tag}`);
     console.log(`[+] Loaded ${Object.keys(spammers).length} spammers`);
+    console.log(`[+] Authorized users: ${ALLOWED_IDS.join(', ')}`);
 });
 
 client.on('messageCreate', async (message) => {
-    if (message.author.id !== OWNER_ID) return;
+    if (!ALLOWED_IDS.includes(message.author.id)) return;
 
     const content = message.content.trim();
     const parts = content.split(/\s+/);
@@ -193,7 +201,7 @@ client.on('messageCreate', async (message) => {
         const sp = spammers[name];
         await message.channel.send(`🚀 מבצע \`${name}\`...`);
         const result = await doSpam(sp.phone, sp.credits);
-        await message.channel.send(result);
+        await message.channel.send(result.message);
     }
 
     else if (content.startsWith('!set ') && parts.length >= 4) {
