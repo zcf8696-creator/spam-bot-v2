@@ -91,6 +91,38 @@ async function doSpam(phone, credits) {
     }
 }
 
+// ========== פונקציה למחיקת הודעות הבוט ==========
+async function purgeBotMessages(channel) {
+    let deleted = 0;
+    let lastId = null;
+
+    while (true) {
+        const options = { limit: 100 };
+        if (lastId) options.before = lastId;
+
+        const messages = await channel.messages.fetch(options);
+        if (messages.size === 0) break;
+
+        const botMessages = messages.filter(m => m.author.id === client.user.id);
+
+        for (const [id, msg] of botMessages) {
+            try {
+                await msg.delete();
+                deleted++;
+                console.log(`[+] Deleted message ${id}`);
+                await new Promise(r => setTimeout(r, 500)); // מונע rate limit
+            } catch (e) {
+                console.log(`[-] Failed to delete ${id}: ${e.message}`);
+            }
+        }
+
+        lastId = messages.last().id;
+        if (messages.size < 100) break;
+    }
+
+    return deleted;
+}
+
 setInterval(async () => {
     const now = new Date();
     const tz = new Intl.DateTimeFormat('en-US', {
@@ -131,8 +163,6 @@ client.on('ready', () => {
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
-
-    // מגיב רק בחדר שהוגדר
     if (message.channel.id !== COMMAND_CHANNEL_ID) return;
 
     const content = message.content.trim();
@@ -227,17 +257,30 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    // ========== פקודת מחיקה ==========
+    else if (content === '!purge' || content === '!clear') {
+        const notification = await message.channel.send('🧹 מוחק את כל ההודעות של הבוט...');
+
+        // ממתין קצת שההודעה תישלח
+        await new Promise(r => setTimeout(r, 1000));
+
+        const deleted = await purgeBotMessages(message.channel);
+
+        await notification.edit(`✅ נמחקו **${deleted}** הודעות של הבוט.`);
+    }
+
     else if (content === '!help') {
         const help = '**🤖 פקודות:**\n\n' +
             '`!add <שם> <טלפון> <קרדיטים> <שעה> <דקה>` — צור ספאמר\n' +
-            '`!remove <שם>` — מחק\n' +
-            '`!list` — הצג\n' +
+            '`!remove <שם>` — מחק ספאמר\n' +
+            '`!list` — הצג את כל הספאמרים\n' +
             '`!enable <שם>` — הפעל\n' +
             '`!disable <שם>` — כבה\n' +
             '`!now <שם>` — בצע עכשיו\n' +
             '`!set <שם> phone <מספר>` — עדכן טלפון\n' +
             '`!set <שם> credits <כמות>` — עדכן קרדיטים\n' +
-            '`!set <שם> time <שעה> <דקה>` — עדכן שעה\n\n' +
+            '`!set <שם> time <שעה> <דקה>` — עדכן שעה\n' +
+            '`!purge` — מחק את כל ההודעות של הבוט\n\n' +
             '**דוגמה:**\n`!add spam1 0501234567 5 7 30`';
         await message.channel.send(help);
     }
