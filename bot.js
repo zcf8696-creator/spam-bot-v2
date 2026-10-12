@@ -9,11 +9,12 @@ const GUILD_ID = process.env.GUILD_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const MESSAGE_ID = process.env.MESSAGE_ID;
 const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID;
+const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
 const OWNER_ID = process.env.OWNER_ID;
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
-const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000; // 10 דקות
+const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 
 const pendingRequests = new Map();
 
@@ -56,11 +57,19 @@ async function showSpamProgress(editFunc, phone, credits) {
             .setColor(finished ? 0x43b581 : 0xFF6B00);
 
         if (finished) {
-            embed.addFields({
-                name: '📊 Stats',
-                value: `✅ Credits Used: **${credits}**\n⏱️ Total: **${totalSeconds} sec**`,
-                inline: false
-            });
+            embed.addFields(
+                {
+                    name: '📊 Stats',
+                    value: `✅ Credits Used: **${credits}**\n⏱️ Total: **${totalSeconds} sec**`,
+                    inline: false
+                },
+                {
+                    name: '⭐ דעתך חשובה לנו',
+                    value: `נשמח שתרשום לנו את דעתך על הספאמר בחדר <#${FEEDBACK_CHANNEL_ID}>`,
+                    inline: false
+                }
+            );
+            embed.setFooter({ text: '© ᴹᴿZENO亗' });
         } else {
             embed.addFields({
                 name: '📊 Stats',
@@ -201,6 +210,7 @@ bot.on('messageCreate', async (message) => {
 
     if (message.content === '!panel') {
         const embed = new EmbedBuilder()
+            .setAuthor({ name: 'ᴹᴿZENO亗', iconURL: bot.user.displayAvatarURL() })
             .setTitle('🔒 Spam Panel')
             .setDescription(
                 '**לחץ על `Spam` כדי לשלוח SMS**\n\n' +
@@ -211,7 +221,7 @@ bot.on('messageCreate', async (message) => {
                 '4️⃣ **הבקשה תישלח לאישור הבעלים**\n'
             )
             .setColor(0x5865F2)
-            .setFooter({ text: 'מערכת הספאם האוטומטית' });
+            .setFooter({ text: '© ᴹᴿZENO亗 • מערכת הספאם האוטומטית' });
 
         const row = new ActionRowBuilder()
             .addComponents(
@@ -271,7 +281,7 @@ bot.on('interactionCreate', async (interaction) => {
     if (interaction.isButton() && interaction.customId === 'spam_button') {
         const modal = new ModalBuilder()
             .setCustomId('spam_modal')
-            .setTitle('Spam - שליחת SMS');
+            .setTitle('Spam-SMS');
 
         const phoneInput = new TextInputBuilder()
             .setCustomId('phone')
@@ -498,7 +508,6 @@ bot.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        // רק מי שביקש יכול לבטל
         if (request.user.user.id !== interaction.user.id) {
             await interaction.reply({ content: '❌ רק מי שביקש יכול לבטל', ephemeral: true });
             return;
@@ -513,7 +522,6 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // מודיע לבעלים
         try {
             if (request.ownerMessage) {
                 await request.ownerMessage.edit({
@@ -582,7 +590,6 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
         const ownerMsg = await owner.send({ embeds: [embed], components: [row] });
         request.ownerMessage = ownerMsg;
 
-        // אחרי 10 דקות — מוחק את ההודעה ושולח הודעה למבקש שהבקשה פגה
         request.ownerTimeout = setTimeout(async () => {
             const stillPending = pendingRequests.get(requestId);
             if (stillPending) {
@@ -602,7 +609,6 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
             }
         }, APPROVAL_TIMEOUT_MS);
 
-        // הודעה למבקש עם כפתור ביטול
         const userEmbed = new EmbedBuilder()
             .setTitle('⏳ הבקשה נשלחה לבעלים')
             .setDescription(
