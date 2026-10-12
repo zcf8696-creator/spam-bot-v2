@@ -34,8 +34,8 @@ app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 // ========== SELFBOT ==========
 const selfbot = new SelfbotClient({ checkUpdate: false });
 
-// ========== טבלת התקדמות ==========
-async function showSpamProgress(phone, credits, channel) {
+// ========== טבלת התקדמות (ephemeral) ==========
+async function showSpamProgress(interaction, phone, credits) {
     const totalSeconds = credits * 25;
     const endTime = Date.now() + totalSeconds * 1000;
 
@@ -65,12 +65,11 @@ async function showSpamProgress(phone, credits, channel) {
                 inline: false
             });
         }
-
         return embed;
     };
 
     try {
-        const msg = await channel.send({ embeds: [createEmbed(totalSeconds)] });
+        await interaction.editReply({ embeds: [createEmbed(totalSeconds)] });
 
         const interval = setInterval(async () => {
             const timeLeft = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
@@ -78,13 +77,13 @@ async function showSpamProgress(phone, credits, channel) {
             if (timeLeft <= 0) {
                 clearInterval(interval);
                 try {
-                    await msg.edit({ embeds: [createEmbed(0, true)] });
+                    await interaction.editReply({ embeds: [createEmbed(0, true)] });
                 } catch (e) {}
                 return;
             }
 
             try {
-                await msg.edit({ embeds: [createEmbed(timeLeft)] });
+                await interaction.editReply({ embeds: [createEmbed(timeLeft)] });
             } catch (e) {}
         }, 5000);
     } catch (e) {
@@ -93,7 +92,7 @@ async function showSpamProgress(phone, credits, channel) {
 }
 
 // ========== פונקציית ספאם ==========
-async function doSpam(phone, credits, commandChannel = null) {
+async function doSpam(phone, credits) {
     try {
         console.log(`[+] Spam: ${phone} | ${credits} credits`);
         const guild = selfbot.guilds.cache.get(GUILD_ID);
@@ -140,12 +139,6 @@ async function doSpam(phone, credits, commandChannel = null) {
 
         await modal.reply();
         console.log(`[+] Spam submitted!`);
-
-        // מציג טבלת התקדמות
-        if (commandChannel) {
-            showSpamProgress(phone, credits, commandChannel);
-        }
-
         return `✅ ספאם בוצע! ${phone} | ${credits}`;
     } catch (e) {
         console.log(`[-] Error: ${e.message}`);
@@ -169,12 +162,12 @@ setInterval(async () => {
         if (sp.lastRun && Date.now() - sp.lastRun < 5 * 60 * 1000) continue;
         if (sp.hour === hour && sp.minute === minute) {
             console.log(`[+] Scheduled: ${id}`);
-            const channel = selfbot.channels.cache.get(COMMAND_CHANNEL_ID);
-            const result = await doSpam(sp.phone, sp.credits, channel);
+            const result = await doSpam(sp.phone, sp.credits);
             sp.lastRun = Date.now();
             saveSpammers();
 
             try {
+                const channel = selfbot.channels.cache.get(COMMAND_CHANNEL_ID);
                 if (channel) {
                     await channel.send(`⏰ **ספאם מתוזמן:** \`${id}\`\n📱 ${sp.phone} | 💳 ${sp.credits}\n${result}`);
                 }
@@ -320,7 +313,7 @@ bot.on('interactionCreate', async (interaction) => {
         await interaction.showModal(modal);
     }
 
-    // ===== כפתור: רשימה =====
+    // ===== כפתור: רשימה (ephemeral) =====
     if (interaction.isButton() && interaction.customId === 'list_button') {
         if (Object.keys(spammers).length === 0) {
             await interaction.reply({ content: '📭 אין ספאמרים', ephemeral: true });
@@ -356,18 +349,18 @@ bot.on('interactionCreate', async (interaction) => {
                         .setStyle(ButtonStyle.Danger)
                 );
 
-            await interaction.followup({ embeds: [embed], components: [row], ephemeral: true });
+            await interaction.followUp({ embeds: [embed], components: [row], ephemeral: true });
             count++;
 
             if (count >= 5) break;
         }
 
         if (count >= 5 && Object.keys(spammers).length > 5) {
-            await interaction.followup({ content: `⚠️ מוצגים רק 5 ספאמרים ראשונים מתוך ${Object.keys(spammers).length}`, ephemeral: true });
+            await interaction.followUp({ content: `⚠️ מוצגים רק 5 ספאמרים ראשונים מתוך ${Object.keys(spammers).length}`, ephemeral: true });
         }
     }
 
-    // ===== כפתור: הפעל עכשיו =====
+    // ===== כפתור: הפעל עכשיו (ephemeral) =====
     if (interaction.isButton() && interaction.customId.startsWith('run_now_')) {
         const id = interaction.customId.substring(8);
 
@@ -376,23 +369,21 @@ bot.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        await interaction.reply({ content: `🚀 מבצע \`${id}\`...`, ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
 
         const sp = spammers[id];
-        const channel = bot.channels.cache.get(COMMAND_CHANNEL_ID);
-        const result = await doSpam(sp.phone, sp.credits, channel);
+
+        // שולח ספאם
+        await doSpam(sp.phone, sp.credits);
 
         sp.lastRun = Date.now();
         saveSpammers();
 
-        try {
-            if (channel) {
-                await channel.send(`🚀 **הרצה ידנית:** \`${id}\`\n📱 ${sp.phone} | 💳 ${sp.credits}\n${result}`);
-            }
-        } catch (e) {}
+        // מציג טבלת התקדמות ephemeral
+        await showSpamProgress(interaction, sp.phone, sp.credits);
     }
 
-    // ===== כפתור: בטל =====
+    // ===== כפתור: בטל (ephemeral) =====
     if (interaction.isButton() && interaction.customId.startsWith('cancel_')) {
         const id = interaction.customId.substring(7);
 
@@ -412,7 +403,7 @@ bot.on('interactionCreate', async (interaction) => {
         console.log(`[+] Cancelled spammer: ${id}`);
     }
 
-    // ===== טופס Spam =====
+    // ===== טופס Spam (ephemeral) =====
     if (interaction.isModalSubmit() && interaction.customId === 'spam_modal') {
         const phone = interaction.fields.getTextInputValue('phone');
         const credits = interaction.fields.getTextInputValue('credits');
@@ -421,10 +412,11 @@ bot.on('interactionCreate', async (interaction) => {
 
         const id = `spam_${phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
 
+        // אם אין שעה — שולח מיד
         if (!hourRaw || !minuteRaw) {
-            await interaction.reply({ content: `🚀 שולח עכשיו ל-${phone}...`, ephemeral: true });
-            const channel = bot.channels.cache.get(COMMAND_CHANNEL_ID);
-            const result = await doSpam(phone, credits, channel);
+            await interaction.deferReply({ ephemeral: true });
+
+            await doSpam(phone, credits);
 
             spammers[id] = {
                 phone,
@@ -437,11 +429,8 @@ bot.on('interactionCreate', async (interaction) => {
             };
             saveSpammers();
 
-            try {
-                if (channel) {
-                    await channel.send(`🚀 **הרצה מיידית:** \`${id}\`\n📱 ${phone} | 💳 ${credits}\n${result}`);
-                }
-            } catch (e) {}
+            // טבלת התקדמות ephemeral
+            await showSpamProgress(interaction, phone, credits);
             return;
         }
 
