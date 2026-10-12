@@ -277,6 +277,7 @@ bot.on('messageCreate', async (message) => {
 
 // ========== INTERACTIONS ==========
 bot.on('interactionCreate', async (interaction) => {
+
     // ===== כפתור: Spam =====
     if (interaction.isButton() && interaction.customId === 'spam_button') {
         const modal = new ModalBuilder()
@@ -323,6 +324,36 @@ bot.on('interactionCreate', async (interaction) => {
         );
 
         await interaction.showModal(modal);
+        return;
+    }
+
+    // ===== טופס Spam (modal submit) =====
+    if (interaction.isModalSubmit() && interaction.customId === 'spam_modal') {
+        try {
+            const phone = interaction.fields.getTextInputValue('phone');
+            const credits = interaction.fields.getTextInputValue('credits');
+            const hourRaw = interaction.fields.getTextInputValue('hour').trim();
+            const minuteRaw = interaction.fields.getTextInputValue('minute').trim();
+
+            await interaction.deferReply({ ephemeral: true });
+
+            if (!hourRaw || !minuteRaw) {
+                await requestApproval(interaction, phone, credits, false, null);
+                return;
+            }
+
+            const hour = parseInt(hourRaw);
+            const minute = parseInt(minuteRaw);
+
+            if (isNaN(hour) || hour < 0 || hour > 23 || isNaN(minute) || minute < 0 || minute > 59) {
+                await interaction.editReply({ content: '❌ שעה או דקה לא תקינות' });
+                return;
+            }
+
+            await requestApproval(interaction, phone, credits, true, null, hour, minute);
+        } catch (e) {
+            console.log(`[-] Modal submit error: ${e.message}`);
+        }
         return;
     }
 
@@ -634,7 +665,9 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
         });
     } catch (e) {
         console.log(`[-] DM error: ${e.message}`);
-        await userInteraction.editReply({ content: `❌ שגיאה בשליחת הבקשה: ${e.message}` });
+        try {
+            await userInteraction.editReply({ content: `❌ שגיאה בשליחת הבקשה: ${e.message}` });
+        } catch (err) {}
     }
 }
 
