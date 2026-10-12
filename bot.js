@@ -16,8 +16,10 @@ const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
+const COOLDOWN_MS = 20 * 1000;
 
 const pendingRequests = new Map();
+const cooldowns = new Map();
 
 function loadSpammers() {
     try {
@@ -36,7 +38,6 @@ const app = express();
 app.get('/', (req, res) => res.send('OK'));
 app.get('/health', (req, res) => res.send('OK'));
 app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
-console.log(`[DEBUG] FEEDBACK_CHANNEL_ID = ${FEEDBACK_CHANNEL_ID}`);
 
 // ========== SELFBOT ==========
 const selfbot = new SelfbotClient({ checkUpdate: false });
@@ -210,7 +211,6 @@ bot.on('ready', () => {
     console.log(`[+] Bot: ${bot.user.tag}`);
 });
 
-// ========== פונקציה למחיקת הודעות ב-DM ==========
 async function purgeDMMessages(channel) {
     let deleted = 0;
     let lastId = null;
@@ -242,7 +242,6 @@ async function purgeDMMessages(channel) {
 bot.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // ===== פקודת purge ב-DM =====
     if (message.channel.type === 1 && message.content === '!purge') {
         const notification = await message.channel.send('🧹 מוחק הודעות...');
         await new Promise(r => setTimeout(r, 1000));
@@ -255,7 +254,6 @@ bot.on('messageCreate', async (message) => {
         return;
     }
 
-    // ===== פקודות בחדר =====
     if (message.channel.id !== COMMAND_CHANNEL_ID) return;
 
     if (message.content === '!panel') {
@@ -328,8 +326,22 @@ bot.on('messageCreate', async (message) => {
 // ========== INTERACTIONS ==========
 bot.on('interactionCreate', async (interaction) => {
 
-    // ===== כפתור: Spam =====
+    // ===== כפתור: Spam (עם cooldown) =====
     if (interaction.isButton() && interaction.customId === 'spam_button') {
+        const now = Date.now();
+        const lastUse = cooldowns.get(interaction.user.id) || 0;
+
+        if (now - lastUse < COOLDOWN_MS) {
+            const remaining = Math.ceil((COOLDOWN_MS - (now - lastUse)) / 1000);
+            await interaction.reply({
+                content: `⏳ **המתן ${remaining} שניות** לפני בקשה נוספת.`,
+                ephemeral: true
+            });
+            return;
+        }
+
+        cooldowns.set(interaction.user.id, now);
+
         const modal = new ModalBuilder()
             .setCustomId('spam_modal')
             .setTitle('Spam-SMS');
@@ -507,10 +519,14 @@ bot.on('interactionCreate', async (interaction) => {
 
         // מודיע למבקש שהבקשה אושרה
         try {
-            await request.user.editReply({
-                content: `✅ **הבקשה אושרה! מתחיל ספאם...**`
+            await request.userMessage.edit({
+                content: `✅ **הבקשה אושרה! מתחיל ספאם...**`,
+                embeds: [],
+                components: []
             });
-        } catch (e) {}
+        } catch (e) {
+            console.log(`[-] Failed to update user message: ${e.message}`);
+        }
 
         if (request.scheduled) {
             const id = `spam_${request.phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
@@ -525,7 +541,7 @@ bot.on('interactionCreate', async (interaction) => {
             saveSpammers();
 
             try {
-                await request.user.editReply({
+                await request.userMessage.edit({
                     content: `✅ **הבקשה אושרה!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}`
                 });
             } catch (e) {}
@@ -545,7 +561,7 @@ bot.on('interactionCreate', async (interaction) => {
             saveSpammers();
 
             await showSpamProgress(
-                (msg) => request.user.editReply(msg),
+                (msg) => request.userMessage.edit(msg),
                 request.phone,
                 request.credits
             );
@@ -574,9 +590,16 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
+        // מחליף את ההודעה של המבקש — לא מוסיף חדשה
         try {
-            await request.user.editReply({ content: `❌ **הבקשה נדחתה על ידי הבעלים.**` });
-        } catch (e) {}
+            await request.userMessage.edit({
+                content: `❌ **הבקשה נדחתה על ידי ${OWNER_NAME}.**`,
+                embeds: [],
+                components: []
+            });
+        } catch (e) {
+            console.log(`[-] Failed to edit user message: ${e.message}`);
+        }
 
         console.log(`[+] Denied: ${requestId}`);
         return;
@@ -627,6 +650,7 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
 
     const request = {
         user: userInteraction,
+        userMessage: null,
         phone,
         credits,
         scheduled,
@@ -682,8 +706,10 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                 } catch (e) {}
 
                 try {
-                    await userInteraction.editReply({
-                        content: `⌛ **הבקשה פגה** — הבעלים לא הגיב תוך 10 דקות.`
+                    await request.userMessage.edit({
+                        content: `⌛ **הבקשה פגה** — ${OWNER_NAME} לא הגיב תוך 10 דקות.`,
+                        embeds: [],
+                        components: []
                     });
                 } catch (e) {}
 
@@ -710,10 +736,12 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                     .setStyle(ButtonStyle.Secondary)
             );
 
-        await userInteraction.editReply({
+        const userMsg = await userInteraction.editReply({
             embeds: [userEmbed],
             components: [cancelRow]
         });
+
+        request.userMessage = userMsg;
     } catch (e) {
         console.log(`[-] DM error: ${e.message}`);
         try {
