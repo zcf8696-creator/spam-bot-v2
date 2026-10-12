@@ -11,6 +11,7 @@ const MESSAGE_ID = process.env.MESSAGE_ID;
 const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID;
 const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
 const OWNER_ID = process.env.OWNER_ID;
+const OWNER_NAME = 'ᴹᴿZENO亗';
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
@@ -35,6 +36,7 @@ const app = express();
 app.get('/', (req, res) => res.send('OK'));
 app.get('/health', (req, res) => res.send('OK'));
 app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
+console.log(`[DEBUG] FEEDBACK_CHANNEL_ID = ${FEEDBACK_CHANNEL_ID}`);
 
 // ========== SELFBOT ==========
 const selfbot = new SelfbotClient({ checkUpdate: false });
@@ -57,6 +59,10 @@ async function showSpamProgress(editFunc, phone, credits) {
             .setColor(finished ? 0x43b581 : 0xFF6B00);
 
         if (finished) {
+            const feedbackText = FEEDBACK_CHANNEL_ID
+                ? `נשמח שתרשום לנו את דעתך על הספאמר בחדר <#${FEEDBACK_CHANNEL_ID}>`
+                : 'נשמח שתרשום לנו את דעתך על הספאמר בחדר feedback';
+
             embed.addFields(
                 {
                     name: '📊 Stats',
@@ -65,11 +71,11 @@ async function showSpamProgress(editFunc, phone, credits) {
                 },
                 {
                     name: '⭐ דעתך חשובה לנו',
-                    value: `נשמח שתרשום לנו את דעתך על הספאמר בחדר <#${FEEDBACK_CHANNEL_ID}>`,
+                    value: feedbackText,
                     inline: false
                 }
             );
-            embed.setFooter({ text: '© ᴹᴿZENO亗' });
+            embed.setFooter({ text: `© ${OWNER_NAME}` });
         } else {
             embed.addFields({
                 name: '📊 Stats',
@@ -204,13 +210,57 @@ bot.on('ready', () => {
     console.log(`[+] Bot: ${bot.user.tag}`);
 });
 
+// ========== פונקציה למחיקת הודעות ב-DM ==========
+async function purgeDMMessages(channel) {
+    let deleted = 0;
+    let lastId = null;
+
+    while (true) {
+        const options = { limit: 100 };
+        if (lastId) options.before = lastId;
+
+        const messages = await channel.messages.fetch(options);
+        if (messages.size === 0) break;
+
+        for (const [id, msg] of messages) {
+            try {
+                await msg.delete();
+                deleted++;
+                await new Promise(r => setTimeout(r, 500));
+            } catch (e) {
+                console.log(`[-] Failed to delete DM ${id}: ${e.message}`);
+            }
+        }
+
+        lastId = messages.last().id;
+        if (messages.size < 100) break;
+    }
+
+    return deleted;
+}
+
 bot.on('messageCreate', async (message) => {
     if (message.author.bot) return;
+
+    // ===== פקודת purge ב-DM =====
+    if (message.channel.type === 1 && message.content === '!purge') {
+        const notification = await message.channel.send('🧹 מוחק הודעות...');
+        await new Promise(r => setTimeout(r, 1000));
+
+        const deleted = await purgeDMMessages(message.channel);
+
+        try {
+            await notification.edit(`✅ נמחקו **${deleted}** הודעות.`);
+        } catch (e) {}
+        return;
+    }
+
+    // ===== פקודות בחדר =====
     if (message.channel.id !== COMMAND_CHANNEL_ID) return;
 
     if (message.content === '!panel') {
         const embed = new EmbedBuilder()
-            .setAuthor({ name: 'ᴹᴿZENO亗', iconURL: bot.user.displayAvatarURL() })
+            .setAuthor({ name: OWNER_NAME, iconURL: bot.user.displayAvatarURL() })
             .setTitle('🔒 Spam Panel')
             .setDescription(
                 '**לחץ על `Spam` כדי לשלוח SMS**\n\n' +
@@ -221,7 +271,7 @@ bot.on('messageCreate', async (message) => {
                 '4️⃣ **הבקשה תישלח לאישור הבעלים**\n'
             )
             .setColor(0x5865F2)
-            .setFooter({ text: '© ᴹᴿZENO亗 • מערכת הספאם האוטומטית' });
+            .setFooter({ text: `© ${OWNER_NAME} • מערכת הספאם האוטומטית` });
 
         const row = new ActionRowBuilder()
             .addComponents(
@@ -327,7 +377,7 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== טופס Spam (modal submit) =====
+    // ===== טופס Spam =====
     if (interaction.isModalSubmit() && interaction.customId === 'spam_modal') {
         try {
             const phone = interaction.fields.getTextInputValue('phone');
@@ -398,10 +448,6 @@ bot.on('interactionCreate', async (interaction) => {
 
             if (count >= 5) break;
         }
-
-        if (count >= 5 && Object.keys(spammers).length > 5) {
-            await interaction.followUp({ content: `⚠️ מוצגים רק 5 ספאמרים ראשונים מתוך ${Object.keys(spammers).length}`, ephemeral: true });
-        }
         return;
     }
 
@@ -421,7 +467,7 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== כפתור: בטל ספאמר (del_spam_) =====
+    // ===== כפתור: בטל ספאמר =====
     if (interaction.isButton() && interaction.customId.startsWith('del_spam_')) {
         const id = interaction.customId.substring(9);
 
@@ -458,6 +504,13 @@ bot.on('interactionCreate', async (interaction) => {
             embeds: [],
             components: []
         });
+
+        // מודיע למבקש שהבקשה אושרה
+        try {
+            await request.user.editReply({
+                content: `✅ **הבקשה אושרה! מתחיל ספאם...**`
+            });
+        } catch (e) {}
 
         if (request.scheduled) {
             const id = `spam_${request.phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
@@ -561,9 +614,7 @@ bot.on('interactionCreate', async (interaction) => {
                     components: []
                 });
             }
-        } catch (e) {
-            console.log(`[-] Failed to notify owner: ${e.message}`);
-        }
+        } catch (e) {}
 
         console.log(`[+] Cancelled by user: ${requestId}`);
         return;
@@ -641,12 +692,12 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
         }, APPROVAL_TIMEOUT_MS);
 
         const userEmbed = new EmbedBuilder()
-            .setTitle('⏳ הבקשה נשלחה לבעלים')
+            .setTitle(`⏳ הבקשה נשלחה ל${OWNER_NAME}`)
             .setDescription(
                 `**🎯 טלפון:** ${phone}\n` +
                 `**💳 קרדיטים:** ${credits}\n` +
                 `**🕐 שעה:** ${timeStr}\n\n` +
-                `ממתין לאישור הבעלים...\n` +
+                `ממתין לאישור...\n` +
                 `תוכל לבטל את הבקשה בכל רגע.`
             )
             .setColor(0xFF6B00);
