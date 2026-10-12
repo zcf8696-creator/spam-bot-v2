@@ -14,7 +14,6 @@ const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
 
-// רשימת בקשות ממתינות לאישור
 const pendingRequests = new Map();
 
 function loadSpammers() {
@@ -39,7 +38,7 @@ app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 const selfbot = new SelfbotClient({ checkUpdate: false });
 
 // ========== טבלת התקדמות ==========
-async function showSpamProgress(interaction, phone, credits) {
+async function showSpamProgress(editFunc, phone, credits) {
     const totalSeconds = credits * 25;
     const endTime = Date.now() + totalSeconds * 1000;
 
@@ -73,7 +72,7 @@ async function showSpamProgress(interaction, phone, credits) {
     };
 
     try {
-        await interaction.editReply({ embeds: [createEmbed(totalSeconds)] });
+        await editFunc({ embeds: [createEmbed(totalSeconds)] });
 
         const interval = setInterval(async () => {
             const timeLeft = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
@@ -81,13 +80,13 @@ async function showSpamProgress(interaction, phone, credits) {
             if (timeLeft <= 0) {
                 clearInterval(interval);
                 try {
-                    await interaction.editReply({ embeds: [createEmbed(0, true)] });
+                    await editFunc({ embeds: [createEmbed(0, true)] });
                 } catch (e) {}
                 return;
             }
 
             try {
-                await interaction.editReply({ embeds: [createEmbed(timeLeft)] });
+                await editFunc({ embeds: [createEmbed(timeLeft)] });
             } catch (e) {}
         }, 5000);
     } catch (e) {
@@ -196,7 +195,6 @@ const bot = new Client({
 
 bot.on('ready', () => {
     console.log(`[+] Bot: ${bot.user.tag}`);
-    console.log(`[+] Owner ID: ${OWNER_ID}`);
 });
 
 bot.on('messageCreate', async (message) => {
@@ -239,8 +237,7 @@ bot.on('messageCreate', async (message) => {
             '**🤖 פקודות:**\n\n' +
             '`!panel` — שלח פאנל עם כפתורים\n' +
             '`!list` — הצג את כל הספאמרים\n' +
-            '`!remove <id>` — מחק ספאמר\n' +
-            '`!purge` — מחק הודעות הבוט'
+            '`!remove <id>` — מחק ספאמר'
         );
     }
 
@@ -379,13 +376,11 @@ bot.on('interactionCreate', async (interaction) => {
         await interaction.deferReply({ ephemeral: true });
 
         const sp = spammers[id];
-
-        // שולח בקשה לאישור לבעלים
-        await requestApproval(interaction, sp.phone, sp.credits, false, id);
+        await requestApproval(interaction, sp.phone, sp.credits, false, null);
     }
 
-    // ===== כפתור: בטל =====
-    if (interaction.isButton() && interaction.customId.startsWith('cancel_')) {
+    // ===== כפתור: בטל ספאמר =====
+    if (interaction.isButton() && interaction.customId.startsWith('cancel_') && !interaction.customId.startsWith('cancel_req_')) {
         const id = interaction.customId.substring(7);
 
         if (!spammers[id]) {
@@ -400,8 +395,6 @@ bot.on('interactionCreate', async (interaction) => {
             content: `🗑️ ספאמר \`${id}\` **בוטל ונמחק**.`,
             ephemeral: true
         });
-
-        console.log(`[+] Cancelled spammer: ${id}`);
     }
 
     // ===== טופס Spam =====
@@ -413,7 +406,6 @@ bot.on('interactionCreate', async (interaction) => {
 
         await interaction.deferReply({ ephemeral: true });
 
-        // אם אין שעה — בקשת אישור מיידית
         if (!hourRaw || !minuteRaw) {
             await requestApproval(interaction, phone, credits, false, null);
             return;
@@ -427,11 +419,10 @@ bot.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        // ספאם מתוזמן — בקשה לאישור
         await requestApproval(interaction, phone, credits, true, null, hour, minute);
     }
 
-    // ===== אישור/דחייה של הבקשה (DM) =====
+    // ===== אישור =====
     if (interaction.isButton() && interaction.customId.startsWith('approve_')) {
         const requestId = interaction.customId.substring(8);
         const request = pendingRequests.get(requestId);
@@ -441,7 +432,6 @@ bot.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        // אישור
         pendingRequests.delete(requestId);
 
         await interaction.update({
@@ -450,7 +440,6 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // מבצע את הספאם
         if (request.scheduled) {
             const id = `spam_${request.phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
             spammers[id] = {
@@ -463,12 +452,13 @@ bot.on('interactionCreate', async (interaction) => {
             };
             saveSpammers();
 
-            await request.user.editReply({
-                content: `✅ **הבקשה אושרה!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}`
-            });
+            try {
+                await request.user.editReply({
+                    content: `✅ **הבקשה אושרה!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}`
+                });
+            } catch (e) {}
         } else {
-            // מבצע עכשיו
-            const result = await doSpam(request.phone, request.credits);
+            await doSpam(request.phone, request.credits);
 
             const id = `spam_${request.phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
             spammers[id] = {
@@ -482,12 +472,17 @@ bot.on('interactionCreate', async (interaction) => {
             };
             saveSpammers();
 
-            await showSpamProgress({ editReply: (msg) => request.user.editReply(msg) }, request.phone, request.credits);
+            await showSpamProgress(
+                (msg) => request.user.editReply(msg),
+                request.phone,
+                request.credits
+            );
         }
 
         console.log(`[+] Approved: ${requestId}`);
     }
 
+    // ===== דחייה =====
     if (interaction.isButton() && interaction.customId.startsWith('deny_')) {
         const requestId = interaction.customId.substring(5);
         const request = pendingRequests.get(requestId);
@@ -505,29 +500,70 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        await request.user.editReply({
-            content: `❌ **הבקשה נדחתה על ידי הבעלים.**`
-        });
+        try {
+            await request.user.editReply({ content: `❌ **הבקשה נדחתה על ידי הבעלים.**` });
+        } catch (e) {}
 
         console.log(`[+] Denied: ${requestId}`);
     }
+
+    // ===== בטל בקשה (מהמבקש) =====
+    if (interaction.isButton() && interaction.customId.startsWith('cancel_request_')) {
+        const requestId = interaction.customId.substring(15);
+        const request = pendingRequests.get(requestId);
+
+        if (!request) {
+            await interaction.reply({ content: '❌ הבקשה כבר לא בתוקף', ephemeral: true });
+            return;
+        }
+
+        // רק מי שביקש יכול לבטל
+        if (request.user.user.id !== interaction.user.id) {
+            await interaction.reply({ content: '❌ רק מי שביקש יכול לבטל', ephemeral: true });
+            return;
+        }
+
+        pendingRequests.delete(requestId);
+
+        await interaction.update({
+            content: `🚫 **ביטלת את הבקשה.**`,
+            embeds: [],
+            components: []
+        });
+
+        // מודיע לבעלים
+        try {
+            const owner = await bot.users.fetch(OWNER_ID);
+            if (request.ownerMessage) {
+                await request.ownerMessage.edit({
+                    content: `🚫 **הבקשה בוטלה על ידי המבקש.**\n\n🎯 ${request.phone}\n👤 ${request.user.user.tag}`,
+                    embeds: [],
+                    components: []
+                });
+            }
+        } catch (e) {}
+
+        console.log(`[+] Cancelled by user: ${requestId}`);
+    }
 });
 
-// ========== פונקציית בקשת אישור ==========
+// ========== בקשת אישור ==========
 async function requestApproval(userInteraction, phone, credits, scheduled, id, hour = null, minute = null) {
     const requestId = Date.now().toString() + Math.random().toString(36).substring(2, 8);
 
-    pendingRequests.set(requestId, {
+    const request = {
         user: userInteraction,
         phone,
         credits,
         scheduled,
         hour,
         minute,
-        createdAt: Date.now()
-    });
+        createdAt: Date.now(),
+        ownerMessage: null
+    };
 
-    // אחרי 5 דקות — הבקשה מתבטלת אוטומטית
+    pendingRequests.set(requestId, request);
+
     setTimeout(() => {
         pendingRequests.delete(requestId);
     }, 5 * 60 * 1000);
@@ -562,10 +598,32 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                     .setStyle(ButtonStyle.Danger)
             );
 
-        await owner.send({ embeds: [embed], components: [row] });
+        const ownerMsg = await owner.send({ embeds: [embed], components: [row] });
+        request.ownerMessage = ownerMsg;
+
+        // הודעה למבקש עם כפתור ביטול
+        const userEmbed = new EmbedBuilder()
+            .setTitle('⏳ הבקשה נשלחה לבעלים')
+            .setDescription(
+                `**🎯 טלפון:** ${phone}\n` +
+                `**💳 קרדיטים:** ${credits}\n` +
+                `**🕐 שעה:** ${timeStr}\n\n` +
+                `ממתין לאישור הבעלים...\n` +
+                `תוכל לבטל את הבקשה בכל רגע.`
+            )
+            .setColor(0xFF6B00);
+
+        const cancelRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`cancel_request_${requestId}`)
+                    .setLabel('🚫 בטל בקשה')
+                    .setStyle(ButtonStyle.Secondary)
+            );
 
         await userInteraction.editReply({
-            content: '⏳ **הבקשה נשלחה לבעלים לאישור. אנא המתן...**'
+            embeds: [userEmbed],
+            components: [cancelRow]
         });
     } catch (e) {
         console.log(`[-] DM error: ${e.message}`);
