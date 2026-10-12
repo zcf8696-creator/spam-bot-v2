@@ -34,22 +34,16 @@ function saveSpammers() {
 
 let spammers = loadSpammers();
 
-// ========== ולידציה ==========
 function isValidPhone(phone) {
-    // רק ספרות, בין 9 ל-15 תווים, מתחיל ב-0 או +
     const cleaned = phone.replace(/[\s\-()]/g, '');
     return /^[0-9+]{9,15}$/.test(cleaned) && /^[0+]/.test(cleaned);
 }
-
 function isValidCredits(credits) {
-    // רק ספרות, בין 1 ל-1000
     return /^\d{1,4}$/.test(credits) && parseInt(credits) >= 1 && parseInt(credits) <= 1000;
 }
-
 function isValidHour(hour) {
     return /^\d{1,2}$/.test(hour) && parseInt(hour) >= 0 && parseInt(hour) <= 23;
 }
-
 function isValidMinute(minute) {
     return /^\d{1,2}$/.test(minute) && parseInt(minute) >= 0 && parseInt(minute) <= 59;
 }
@@ -184,6 +178,7 @@ async function doSpam(phone, credits) {
     }
 }
 
+// ========== SCHEDULER ==========
 setInterval(async () => {
     const now = new Date();
     const tz = new Intl.DateTimeFormat('en-US', {
@@ -203,12 +198,15 @@ setInterval(async () => {
             sp.lastRun = Date.now();
             saveSpammers();
 
+            // שולח DM למי שיצר את הספאמר — לא פומבי
             try {
-                const channel = selfbot.channels.cache.get(COMMAND_CHANNEL_ID);
-                if (channel) {
-                    await channel.send(`⏰ **ספאם מתוזמן:** \`${id}\`\n📱 ${sp.phone} | 💳 ${sp.credits}\n${result}`);
+                if (sp.ownerId) {
+                    const owner = await bot.users.fetch(sp.ownerId);
+                    await owner.send(`⏰ **ספאם מתוזמן בוצע!**\n\n🆔 \`${id}\`\n📱 ${sp.phone}\n💳 ${sp.credits}\n\n${result}`);
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.log(`[-] Failed to DM owner: ${e.message}`);
+            }
         }
     }
 }, 60000);
@@ -419,7 +417,6 @@ bot.on('interactionCreate', async (interaction) => {
 
             await interaction.deferReply({ ephemeral: true });
 
-            // ולידציה - רק מספרים
             if (!isValidPhone(phone)) {
                 await interaction.editReply({
                     content: '❌ **מספר טלפון לא תקין**\n\nהמספר חייב להכיל **ספרות בלבד** (9-15 ספרות).\nדוגמה: `0501234567`'
@@ -434,7 +431,6 @@ bot.on('interactionCreate', async (interaction) => {
                 return;
             }
 
-            // אם יש שעה — בודק גם אותה
             if (hourRaw) {
                 if (!isValidHour(hourRaw)) {
                     await interaction.editReply({
@@ -453,7 +449,6 @@ bot.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            // אם אין שעה — שולח מיד
             if (!hourRaw || !minuteRaw) {
                 await requestApproval(interaction, phone, credits, false, null);
                 return;
@@ -583,6 +578,7 @@ bot.on('interactionCreate', async (interaction) => {
                 hour: request.hour,
                 minute: request.minute,
                 enabled: true,
+                ownerId: request.user.user.id,
                 createdAt: Date.now()
             };
             saveSpammers();
@@ -603,6 +599,7 @@ bot.on('interactionCreate', async (interaction) => {
                 minute: null,
                 enabled: false,
                 lastRun: Date.now(),
+                ownerId: request.user.user.id,
                 createdAt: Date.now()
             };
             saveSpammers();
