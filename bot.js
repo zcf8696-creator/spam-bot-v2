@@ -13,6 +13,7 @@ const OWNER_ID = process.env.OWNER_ID;
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
+const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000; // 10 דקות
 
 const pendingRequests = new Map();
 
@@ -37,7 +38,6 @@ app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 // ========== SELFBOT ==========
 const selfbot = new SelfbotClient({ checkUpdate: false });
 
-// ========== טבלת התקדמות ==========
 async function showSpamProgress(editFunc, phone, credits) {
     const totalSeconds = credits * 25;
     const endTime = Date.now() + totalSeconds * 1000;
@@ -94,7 +94,6 @@ async function showSpamProgress(editFunc, phone, credits) {
     }
 }
 
-// ========== פונקציית ספאם ==========
 async function doSpam(phone, credits) {
     try {
         console.log(`[+] Spam: ${phone} | ${credits} credits`);
@@ -149,7 +148,6 @@ async function doSpam(phone, credits) {
     }
 }
 
-// ========== SCHEDULER ==========
 setInterval(async () => {
     const now = new Date();
     const tz = new Intl.DateTimeFormat('en-US', {
@@ -315,6 +313,7 @@ bot.on('interactionCreate', async (interaction) => {
         );
 
         await interaction.showModal(modal);
+        return;
     }
 
     // ===== כפתור: רשימה =====
@@ -348,7 +347,7 @@ bot.on('interactionCreate', async (interaction) => {
                         .setLabel('🚀 הפעל עכשיו')
                         .setStyle(ButtonStyle.Success),
                     new ButtonBuilder()
-                        .setCustomId(`cancel_${id}`)
+                        .setCustomId(`del_spam_${id}`)
                         .setLabel('🗑️ בטל')
                         .setStyle(ButtonStyle.Danger)
                 );
@@ -362,6 +361,7 @@ bot.on('interactionCreate', async (interaction) => {
         if (count >= 5 && Object.keys(spammers).length > 5) {
             await interaction.followUp({ content: `⚠️ מוצגים רק 5 ספאמרים ראשונים מתוך ${Object.keys(spammers).length}`, ephemeral: true });
         }
+        return;
     }
 
     // ===== כפתור: הפעל עכשיו =====
@@ -377,11 +377,12 @@ bot.on('interactionCreate', async (interaction) => {
 
         const sp = spammers[id];
         await requestApproval(interaction, sp.phone, sp.credits, false, null);
+        return;
     }
 
-    // ===== כפתור: בטל ספאמר =====
-    if (interaction.isButton() && interaction.customId.startsWith('cancel_') && !interaction.customId.startsWith('cancel_req_')) {
-        const id = interaction.customId.substring(7);
+    // ===== כפתור: בטל ספאמר (del_spam_) =====
+    if (interaction.isButton() && interaction.customId.startsWith('del_spam_')) {
+        const id = interaction.customId.substring(9);
 
         if (!spammers[id]) {
             await interaction.reply({ content: `❌ \`${id}\` לא נמצא`, ephemeral: true });
@@ -395,31 +396,7 @@ bot.on('interactionCreate', async (interaction) => {
             content: `🗑️ ספאמר \`${id}\` **בוטל ונמחק**.`,
             ephemeral: true
         });
-    }
-
-    // ===== טופס Spam =====
-    if (interaction.isModalSubmit() && interaction.customId === 'spam_modal') {
-        const phone = interaction.fields.getTextInputValue('phone');
-        const credits = interaction.fields.getTextInputValue('credits');
-        const hourRaw = interaction.fields.getTextInputValue('hour').trim();
-        const minuteRaw = interaction.fields.getTextInputValue('minute').trim();
-
-        await interaction.deferReply({ ephemeral: true });
-
-        if (!hourRaw || !minuteRaw) {
-            await requestApproval(interaction, phone, credits, false, null);
-            return;
-        }
-
-        const hour = parseInt(hourRaw);
-        const minute = parseInt(minuteRaw);
-
-        if (isNaN(hour) || hour < 0 || hour > 23 || isNaN(minute) || minute < 0 || minute > 59) {
-            await interaction.editReply({ content: '❌ שעה או דקה לא תקינות' });
-            return;
-        }
-
-        await requestApproval(interaction, phone, credits, true, null, hour, minute);
+        return;
     }
 
     // ===== אישור =====
@@ -433,6 +410,7 @@ bot.on('interactionCreate', async (interaction) => {
         }
 
         pendingRequests.delete(requestId);
+        if (request.ownerTimeout) clearTimeout(request.ownerTimeout);
 
         await interaction.update({
             content: `✅ **אישרת את הבקשה!**\n\n🎯 ${request.phone}\n💳 ${request.credits} קרדיטים`,
@@ -480,6 +458,7 @@ bot.on('interactionCreate', async (interaction) => {
         }
 
         console.log(`[+] Approved: ${requestId}`);
+        return;
     }
 
     // ===== דחייה =====
@@ -493,6 +472,7 @@ bot.on('interactionCreate', async (interaction) => {
         }
 
         pendingRequests.delete(requestId);
+        if (request.ownerTimeout) clearTimeout(request.ownerTimeout);
 
         await interaction.update({
             content: `❌ **דחית את הבקשה.**\n\n🎯 ${request.phone}`,
@@ -505,6 +485,7 @@ bot.on('interactionCreate', async (interaction) => {
         } catch (e) {}
 
         console.log(`[+] Denied: ${requestId}`);
+        return;
     }
 
     // ===== בטל בקשה (מהמבקש) =====
@@ -524,26 +505,29 @@ bot.on('interactionCreate', async (interaction) => {
         }
 
         pendingRequests.delete(requestId);
+        if (request.ownerTimeout) clearTimeout(request.ownerTimeout);
 
         await interaction.update({
-            content: `🚫 **ביטלת את הבקשה.**`,
+            content: `🚫 **הבקשה בוטלה.**`,
             embeds: [],
             components: []
         });
 
         // מודיע לבעלים
         try {
-            const owner = await bot.users.fetch(OWNER_ID);
             if (request.ownerMessage) {
                 await request.ownerMessage.edit({
-                    content: `🚫 **הבקשה בוטלה על ידי המבקש.**\n\n🎯 ${request.phone}\n👤 ${request.user.user.tag}`,
+                    content: `🚫 **המבקש ביטל את הבקשה.**\n\n🎯 ${request.phone}\n👤 ${request.user.user.tag}`,
                     embeds: [],
                     components: []
                 });
             }
-        } catch (e) {}
+        } catch (e) {
+            console.log(`[-] Failed to notify owner: ${e.message}`);
+        }
 
         console.log(`[+] Cancelled by user: ${requestId}`);
+        return;
     }
 });
 
@@ -559,14 +543,11 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
         hour,
         minute,
         createdAt: Date.now(),
-        ownerMessage: null
+        ownerMessage: null,
+        ownerTimeout: null
     };
 
     pendingRequests.set(requestId, request);
-
-    setTimeout(() => {
-        pendingRequests.delete(requestId);
-    }, 5 * 60 * 1000);
 
     try {
         const owner = await bot.users.fetch(OWNER_ID);
@@ -584,7 +565,7 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                 { name: '🕐 שעה', value: timeStr, inline: true }
             )
             .setColor(0xFF6B00)
-            .setFooter({ text: 'יש לך 5 דקות לאשר או לדחות' });
+            .setFooter({ text: 'יש לך 10 דקות לאשר או לדחות' });
 
         const row = new ActionRowBuilder()
             .addComponents(
@@ -600,6 +581,26 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
 
         const ownerMsg = await owner.send({ embeds: [embed], components: [row] });
         request.ownerMessage = ownerMsg;
+
+        // אחרי 10 דקות — מוחק את ההודעה ושולח הודעה למבקש שהבקשה פגה
+        request.ownerTimeout = setTimeout(async () => {
+            const stillPending = pendingRequests.get(requestId);
+            if (stillPending) {
+                pendingRequests.delete(requestId);
+
+                try {
+                    await ownerMsg.delete();
+                } catch (e) {}
+
+                try {
+                    await userInteraction.editReply({
+                        content: `⌛ **הבקשה פגה** — הבעלים לא הגיב תוך 10 דקות.`
+                    });
+                } catch (e) {}
+
+                console.log(`[+] Request timed out: ${requestId}`);
+            }
+        }, APPROVAL_TIMEOUT_MS);
 
         // הודעה למבקש עם כפתור ביטול
         const userEmbed = new EmbedBuilder()
