@@ -273,22 +273,17 @@ async function purgeDMMessages(channel) {
 // ========== פאנל קרדיטים יומי ==========
 async function sendCreditsPanel(channel) {
     const embed = new EmbedBuilder()
-        .setAuthor({ name: OWNER_NAME, iconURL: bot.user.displayAvatarURL() })
         .setTitle('🎁 Free Gift!')
-        .setDescription(
-            `**Claim ${DAILY_CREDITS} free credits every 24 hours**\n\n` +
-            'לחץ על הכפתור למטה כדי לקבל את הקרדיטים שלך.'
-        )
-        .setColor(0xFFD700)
-        .setFooter({ text: `© ${OWNER_NAME}` });
+        .setDescription(`Claim **${DAILY_CREDITS} free credits** every **24 hours**.`)
+        .setColor(0x2B2D31);
 
     const row = new ActionRowBuilder()
         .addComponents(
             new ButtonBuilder()
                 .setCustomId('claim_credits')
                 .setLabel(`Claim ${DAILY_CREDITS} Credits`)
-                .setEmoji('🎁')
-                .setStyle(ButtonStyle.Success)
+                .setEmoji('🔔')
+                .setStyle(ButtonStyle.Danger)
         );
 
     await channel.send({ embeds: [embed], components: [row] });
@@ -433,10 +428,12 @@ bot.on('interactionCreate', async (interaction) => {
             const hours = Math.floor(remaining / (60 * 60 * 1000));
             const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
 
-            await interaction.reply({
-                content: `⏳ **כבר לקחת קרדיטים היום**\n\nתוכל לחזור בעוד **${hours} שעות ו-${minutes} דקות**.`,
-                ephemeral: true
-            });
+            const embed = new EmbedBuilder()
+                .setTitle('⏳ Already claimed today')
+                .setDescription(`Come back in **${hours}h ${minutes}m**`)
+                .setColor(0x2B2D31);
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
             return;
         }
 
@@ -445,10 +442,15 @@ bot.on('interactionCreate', async (interaction) => {
         u.totalClaimed = (u.totalClaimed || 0) + DAILY_CREDITS;
         saveUsers();
 
-        await interaction.reply({
-            content: `✅ **קיבלת ${DAILY_CREDITS} קרדיטים!**\n\n💳 סה"כ: **${u.credits}**\n⏰ תוכל לקחת שוב בעוד 24 שעות.`,
-            ephemeral: true
-        });
+        const embed = new EmbedBuilder()
+            .setTitle(`🎁 +${DAILY_CREDITS} Credits!`)
+            .setDescription(
+                `New balance: **${u.credits}** credits\n` +
+                `Come back tomorrow!`
+            )
+            .setColor(0x2B2D31);
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
         return;
     }
 
