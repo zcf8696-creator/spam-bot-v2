@@ -17,6 +17,7 @@ const PORT = process.env.PORT || 8080;
 const DATA_FILE = 'spammers.json';
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const COOLDOWN_MS = 20 * 1000;
+const MSG_PER_SECOND = 0.7;
 
 const pendingRequests = new Map();
 const cooldowns = new Map();
@@ -56,16 +57,14 @@ app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 // ========== SELFBOT ==========
 const selfbot = new SelfbotClient({ checkUpdate: false });
 
-// ========== טבלת התקדמות עם Success counter ==========
 async function showSpamProgress(editFunc, phone, credits) {
     const totalSeconds = credits * 25;
     const startTime = Date.now();
     const endTime = startTime + totalSeconds * 1000;
 
-    // מחשיב Success לפי זמן שעבר (1 הודעה כל ~1.5 שניות)
     const createEmbed = (timeLeft, finished = false) => {
         const elapsed = (Date.now() - startTime) / 1000;
-        const success = Math.max(0, Math.floor(elapsed / 1.5));
+        const success = Math.max(0, Math.floor(elapsed * MSG_PER_SECOND));
 
         const embed = new EmbedBuilder()
             .setTitle(finished ? '✅ Spam Finished' : '🚀 Spam in Progress')
@@ -460,7 +459,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== כפתור רשימה — רק של המשתמש =====
     if (interaction.isButton() && interaction.customId === 'list_button') {
         const userSpammers = Object.entries(spammers).filter(([id, sp]) => sp.ownerId === interaction.user.id);
 
@@ -529,6 +527,11 @@ bot.on('interactionCreate', async (interaction) => {
             return;
         }
 
+        if (spammers[id].ownerId !== interaction.user.id) {
+            await interaction.reply({ content: '❌ זה לא הספאמר שלך', ephemeral: true });
+            return;
+        }
+
         delete spammers[id];
         saveSpammers();
 
@@ -558,10 +561,11 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
+        // ===== הודעה למבקש =====
         try {
             if (request.userInteraction) {
                 await request.userInteraction.editReply({
-                    content: `✅ **הבקשה אושרה! מתחיל ספאם...**`,
+                    content: `🚀 **מתחיל spam...**`,
                     embeds: [],
                     components: []
                 });
@@ -586,7 +590,7 @@ bot.on('interactionCreate', async (interaction) => {
             try {
                 if (request.userInteraction) {
                     await request.userInteraction.editReply({
-                        content: `✅ **הבקשה אושרה!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}`
+                        content: `✅ **הספאם המתוזמן נוצר!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}`
                     });
                 }
             } catch (e) {}
