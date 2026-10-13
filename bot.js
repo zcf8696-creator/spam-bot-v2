@@ -56,11 +56,17 @@ app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 // ========== SELFBOT ==========
 const selfbot = new SelfbotClient({ checkUpdate: false });
 
+// ========== טבלת התקדמות עם Success counter ==========
 async function showSpamProgress(editFunc, phone, credits) {
     const totalSeconds = credits * 25;
-    const endTime = Date.now() + totalSeconds * 1000;
+    const startTime = Date.now();
+    const endTime = startTime + totalSeconds * 1000;
 
+    // מחשיב Success לפי זמן שעבר (1 הודעה כל ~1.5 שניות)
     const createEmbed = (timeLeft, finished = false) => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const success = Math.max(0, Math.floor(elapsed / 1.5));
+
         const embed = new EmbedBuilder()
             .setTitle(finished ? '✅ Spam Finished' : '🚀 Spam in Progress')
             .addFields(
@@ -81,7 +87,7 @@ async function showSpamProgress(editFunc, phone, credits) {
             embed.addFields(
                 {
                     name: '📊 Stats',
-                    value: `✅ Credits Used: **${credits}**\n⏱️ Total: **${totalSeconds} sec**`,
+                    value: `✅ Success: **${success}**\n💳 Credits Used: **${credits}**\n⏱️ Total: **${totalSeconds} sec**`,
                     inline: false
                 },
                 {
@@ -94,7 +100,7 @@ async function showSpamProgress(editFunc, phone, credits) {
         } else {
             embed.addFields({
                 name: '📊 Stats',
-                value: `💳 Credits: **${credits}**`,
+                value: `✅ Success: **${success}**\n💳 Credits: **${credits}**`,
                 inline: false
             });
         }
@@ -118,7 +124,7 @@ async function showSpamProgress(editFunc, phone, credits) {
             try {
                 await editFunc({ embeds: [createEmbed(timeLeft)], components: [] });
             } catch (e) {}
-        }, 5000);
+        }, 2000);
     } catch (e) {
         console.log(`[-] Progress error: ${e.message}`);
     }
@@ -197,12 +203,10 @@ setInterval(async () => {
             sp.lastRun = Date.now();
             saveSpammers();
 
-            // שולח DM למי שיצר את הספאמר — לא פומבי
             try {
                 if (sp.ownerId) {
                     const owner = await bot.users.fetch(sp.ownerId);
                     await owner.send(`⏰ **ספאם מתוזמן בוצע!**\n\n🆔 \`${id}\`\n📱 ${sp.phone}\n💳 ${sp.credits}\n\n${result}`);
-                    console.log(`[+] DM sent to owner ${sp.ownerId}`);
                 }
             } catch (e) {
                 console.log(`[-] Failed to DM owner: ${e.message}`);
@@ -456,16 +460,19 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // ===== כפתור רשימה — רק של המשתמש =====
     if (interaction.isButton() && interaction.customId === 'list_button') {
-        if (Object.keys(spammers).length === 0) {
-            await interaction.reply({ content: '📭 אין ספאמרים', ephemeral: true });
+        const userSpammers = Object.entries(spammers).filter(([id, sp]) => sp.ownerId === interaction.user.id);
+
+        if (userSpammers.length === 0) {
+            await interaction.reply({ content: '📭 אין לך ספאמרים', ephemeral: true });
             return;
         }
 
         await interaction.deferReply({ ephemeral: true });
 
         let count = 0;
-        for (const [id, sp] of Object.entries(spammers)) {
+        for (const [id, sp] of userSpammers) {
             const status = sp.enabled ? '✅ פעיל' : '❌ כבוי';
             const time = sp.hour !== null ? `${String(sp.hour).padStart(2, '0')}:${String(sp.minute).padStart(2, '0')}` : 'מיידי';
 
@@ -545,14 +552,12 @@ bot.on('interactionCreate', async (interaction) => {
         pendingRequests.delete(requestId);
         if (request.ownerTimeout) clearTimeout(request.ownerTimeout);
 
-        // מעדכן את ההודעה של הבעלים
         await interaction.update({
             content: `✅ **אישרת את הבקשה!**\n\n🎯 ${request.phone}\n💳 ${request.credits} קרדיטים`,
             embeds: [],
             components: []
         });
 
-        // ===== מעדכן את ההודעה של המבקש דרך ה-interaction =====
         try {
             if (request.userInteraction) {
                 await request.userInteraction.editReply({
@@ -560,9 +565,6 @@ bot.on('interactionCreate', async (interaction) => {
                     embeds: [],
                     components: []
                 });
-                console.log(`[+] Updated user message for ${requestId}`);
-            } else {
-                console.log(`[-] No userInteraction for ${requestId}`);
             }
         } catch (e) {
             console.log(`[-] Failed to edit user message: ${e.message}`);
@@ -636,7 +638,6 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // מעדכן את ההודעה של המבקש
         try {
             if (request.userInteraction) {
                 await request.userInteraction.editReply({
@@ -644,11 +645,8 @@ bot.on('interactionCreate', async (interaction) => {
                     embeds: [],
                     components: []
                 });
-                console.log(`[+] Notified user about denial ${requestId}`);
             }
-        } catch (e) {
-            console.log(`[-] Failed to notify user: ${e.message}`);
-        }
+        } catch (e) {}
 
         console.log(`[+] Denied: ${requestId}`);
         return;
@@ -698,7 +696,7 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
     const requestId = Date.now().toString() + Math.random().toString(36).substring(2, 8);
 
     const request = {
-        userInteraction: userInteraction,  // ← שומר את ה-interaction
+        userInteraction: userInteraction,
         userId: userInteraction.user.id,
         userTag: userInteraction.user.tag,
         phone,
