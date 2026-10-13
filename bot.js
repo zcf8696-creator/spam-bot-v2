@@ -10,30 +10,44 @@ const CHANNEL_ID = process.env.CHANNEL_ID;
 const MESSAGE_ID = process.env.MESSAGE_ID;
 const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID;
 const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
+const CREDITS_CHANNEL_ID = process.env.CREDITS_CHANNEL_ID;
 const OWNER_ID = process.env.OWNER_ID;
 const OWNER_NAME = 'ᴹᴿZENO亗';
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
-const DATA_FILE = 'spammers.json';
+const SPAMMERS_FILE = 'spammers.json';
+const USERS_FILE = 'users.json';
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const COOLDOWN_MS = 20 * 1000;
-const MSG_PER_SECOND = 0.7;
+const DAILY_CREDITS = 5;
+const CREDITS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 const pendingRequests = new Map();
 const cooldowns = new Map();
 
-function loadSpammers() {
+function loadJSON(file) {
     try {
-        return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+        return JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
         return {};
     }
 }
-function saveSpammers() {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(spammers, null, 2), 'utf8');
+function saveJSON(file, data) {
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
 }
 
-let spammers = loadSpammers();
+let spammers = loadJSON(SPAMMERS_FILE);
+let users = loadJSON(USERS_FILE);
+
+function saveSpammers() { saveJSON(SPAMMERS_FILE, spammers); }
+function saveUsers() { saveJSON(USERS_FILE, users); }
+
+function getUser(userId) {
+    if (!users[userId]) {
+        users[userId] = { credits: 0, lastClaim: 0, totalClaimed: 0 };
+    }
+    return users[userId];
+}
 
 function isValidPhone(phone) {
     const cleaned = phone.replace(/[\s\-()]/g, '');
@@ -64,7 +78,7 @@ async function showSpamProgress(editFunc, phone, credits) {
 
     const createEmbed = (timeLeft, finished = false) => {
         const elapsed = (Date.now() - startTime) / 1000;
-        const success = Math.max(0, Math.floor(elapsed * MSG_PER_SECOND));
+        const success = Math.max(0, Math.floor(elapsed * 0.7));
 
         const embed = new EmbedBuilder()
             .setTitle(finished ? '✅ Spam Finished' : '🚀 Spam in Progress')
@@ -207,9 +221,7 @@ setInterval(async () => {
                     const owner = await bot.users.fetch(sp.ownerId);
                     await owner.send(`⏰ **ספאם מתוזמן בוצע!**\n\n🆔 \`${id}\`\n📱 ${sp.phone}\n💳 ${sp.credits}\n\n${result}`);
                 }
-            } catch (e) {
-                console.log(`[-] Failed to DM owner: ${e.message}`);
-            }
+            } catch (e) {}
         }
     }
 }, 60000);
@@ -258,23 +270,59 @@ async function purgeDMMessages(channel) {
     return deleted;
 }
 
+// ========== פאנל קרדיטים יומי ==========
+async function sendCreditsPanel(channel) {
+    const embed = new EmbedBuilder()
+        .setAuthor({ name: OWNER_NAME, iconURL: bot.user.displayAvatarURL() })
+        .setTitle('🎁 Free Gift!')
+        .setDescription(
+            `**Claim ${DAILY_CREDITS} free credits every 24 hours**\n\n` +
+            'לחץ על הכפתור למטה כדי לקבל את הקרדיטים שלך.'
+        )
+        .setColor(0xFFD700)
+        .setFooter({ text: `© ${OWNER_NAME}` });
+
+    const row = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('claim_credits')
+                .setLabel(`Claim ${DAILY_CREDITS} Credits`)
+                .setEmoji('🎁')
+                .setStyle(ButtonStyle.Success)
+        );
+
+    await channel.send({ embeds: [embed], components: [row] });
+}
+
 bot.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
+    // ===== פקודת purge ב-DM =====
     if (message.channel.type === 1 && message.content === '!purge') {
         const notification = await message.channel.send('🧹 מוחק הודעות...');
         await new Promise(r => setTimeout(r, 1000));
-
         const deleted = await purgeDMMessages(message.channel);
-
         try {
             await notification.edit(`✅ נמחקו **${deleted}** הודעות.`);
         } catch (e) {}
         return;
     }
 
-    if (message.channel.id !== COMMAND_CHANNEL_ID) return;
+    // ===== בדיקת חדרים =====
+    const isCommandChannel = message.channel.id === COMMAND_CHANNEL_ID;
+    const isCreditsChannel = CREDITS_CHANNEL_ID && message.channel.id === CREDITS_CHANNEL_ID;
 
+    if (!isCommandChannel && !isCreditsChannel) return;
+
+    // ===== פקודות בחדר קרדיטים =====
+    if (isCreditsChannel) {
+        if (message.content === '!credits-panel') {
+            await sendCreditsPanel(message.channel);
+        }
+        return;
+    }
+
+    // ===== פקודות בחדר הראשי =====
     if (message.content === '!panel') {
         const embed = new EmbedBuilder()
             .setAuthor({ name: OWNER_NAME, iconURL: bot.user.displayAvatarURL() })
@@ -285,7 +333,8 @@ bot.on('messageCreate', async (message) => {
                 '1️⃣ לחץ על כפתור `Spam` למטה\n' +
                 '2️⃣ מלא את הטופס: מספר טלפון + קרדיטים\n' +
                 '3️⃣ בחר שעה (אופציונלי) — אם ריק, ישלח מיד\n' +
-                '4️⃣ **הבקשה תישלח לאישור הבעלים**\n'
+                '4️⃣ **הבקשה תישלח לאישור הבעלים**\n\n' +
+                '💳 **הקרדיטים שלך מחויבים מהחשבון**'
             )
             .setColor(0x5865F2)
             .setFooter({ text: `© ${OWNER_NAME} • מערכת הספאם האוטומטית` });
@@ -301,7 +350,12 @@ bot.on('messageCreate', async (message) => {
                     .setCustomId('list_button')
                     .setLabel('רשימה')
                     .setEmoji('📋')
-                    .setStyle(ButtonStyle.Primary)
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('my_credits')
+                    .setLabel('הקרדיטים שלי')
+                    .setEmoji('💳')
+                    .setStyle(ButtonStyle.Secondary)
             );
 
         await message.channel.send({ embeds: [embed], components: [row] });
@@ -311,9 +365,32 @@ bot.on('messageCreate', async (message) => {
         await message.channel.send(
             '**🤖 פקודות:**\n\n' +
             '`!panel` — שלח פאנל עם כפתורים\n' +
+            '`!credits-panel` — שלח פאנל קרדיטים יומי (בחדר daily-credits)\n' +
+            '`!give <@user> <amount>` — תן קרדיטים (בעלים בלבד)\n' +
             '`!list` — הצג את כל הספאמרים\n' +
             '`!remove <id>` — מחק ספאמר'
         );
+    }
+
+    if (message.content.startsWith('!give ')) {
+        if (message.author.id !== OWNER_ID) {
+            await message.channel.send('❌ רק הבעלים יכול לתת קרדיטים');
+            return;
+        }
+        const parts = message.content.split(/\s+/);
+        const target = message.mentions.users.first();
+        const amount = parseInt(parts[2]);
+
+        if (!target || isNaN(amount)) {
+            await message.channel.send('❌ שימוש: `!give @user <amount>`');
+            return;
+        }
+
+        const u = getUser(target.id);
+        u.credits += amount;
+        saveUsers();
+
+        await message.channel.send(`✅ נתת **${amount}** קרדיטים ל-${target.tag}\n💳 סה"כ: **${u.credits}**`);
     }
 
     if (message.content === '!list') {
@@ -345,6 +422,66 @@ bot.on('messageCreate', async (message) => {
 // ========== INTERACTIONS ==========
 bot.on('interactionCreate', async (interaction) => {
 
+    // ===== Claim Credits =====
+    if (interaction.isButton() && interaction.customId === 'claim_credits') {
+        const u = getUser(interaction.user.id);
+        const now = Date.now();
+        const timeSinceClaim = now - (u.lastClaim || 0);
+
+        if (timeSinceClaim < CREDITS_COOLDOWN_MS) {
+            const remaining = CREDITS_COOLDOWN_MS - timeSinceClaim;
+            const hours = Math.floor(remaining / (60 * 60 * 1000));
+            const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+
+            await interaction.reply({
+                content: `⏳ **כבר לקחת קרדיטים היום**\n\nתוכל לחזור בעוד **${hours} שעות ו-${minutes} דקות**.`,
+                ephemeral: true
+            });
+            return;
+        }
+
+        u.credits += DAILY_CREDITS;
+        u.lastClaim = now;
+        u.totalClaimed = (u.totalClaimed || 0) + DAILY_CREDITS;
+        saveUsers();
+
+        await interaction.reply({
+            content: `✅ **קיבלת ${DAILY_CREDITS} קרדיטים!**\n\n💳 סה"כ: **${u.credits}**\n⏰ תוכל לקחת שוב בעוד 24 שעות.`,
+            ephemeral: true
+        });
+        return;
+    }
+
+    // ===== הקרדיטים שלי =====
+    if (interaction.isButton() && interaction.customId === 'my_credits') {
+        const u = getUser(interaction.user.id);
+        const now = Date.now();
+        const timeSinceClaim = now - (u.lastClaim || 0);
+        const canClaim = timeSinceClaim >= CREDITS_COOLDOWN_MS;
+
+        let nextClaim = 'זמין עכשיו! 🎁';
+        if (!canClaim) {
+            const remaining = CREDITS_COOLDOWN_MS - timeSinceClaim;
+            const hours = Math.floor(remaining / (60 * 60 * 1000));
+            const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+            nextClaim = `בעוד **${hours} שעות ו-${minutes} דקות**`;
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('💳 הקרדיטים שלי')
+            .addFields(
+                { name: '💰 יתרה', value: `**${u.credits}** קרדיטים`, inline: true },
+                { name: '📊 סה"כ נצבר', value: `**${u.totalClaimed || 0}**`, inline: true },
+                { name: '⏰ Claim הבא', value: nextClaim, inline: false }
+            )
+            .setColor(0x43b581)
+            .setFooter({ text: `© ${OWNER_NAME}` });
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+        return;
+    }
+
+    // ===== כפתור Spam =====
     if (interaction.isButton() && interaction.customId === 'spam_button') {
         const now = Date.now();
         const lastUse = cooldowns.get(interaction.user.id) || 0;
@@ -407,6 +544,7 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // ===== טופס Spam =====
     if (interaction.isModalSubmit() && interaction.customId === 'spam_modal') {
         try {
             const phone = interaction.fields.getTextInputValue('phone').trim();
@@ -444,6 +582,17 @@ bot.on('interactionCreate', async (interaction) => {
                 return;
             }
 
+            // ===== בדיקת קרדיטים =====
+            const u = getUser(interaction.user.id);
+            const creditsNum = parseInt(credits);
+
+            if (u.credits < creditsNum) {
+                await interaction.editReply({
+                    content: `❌ **אין לך מספיק קרדיטים**\n\n💳 יש לך: **${u.credits}**\n💳 צריך: **${creditsNum}**\n\n🎁 לך ל-<#${CREDITS_CHANNEL_ID}> כדי לקבל קרדיטים חינם.`
+                });
+                return;
+            }
+
             if (!hourRaw || !minuteRaw) {
                 await requestApproval(interaction, phone, credits, false, null);
                 return;
@@ -459,6 +608,7 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // ===== רשימה =====
     if (interaction.isButton() && interaction.customId === 'list_button') {
         const userSpammers = Object.entries(spammers).filter(([id, sp]) => sp.ownerId === interaction.user.id);
 
@@ -504,11 +654,17 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // ===== הפעל עכשיו =====
     if (interaction.isButton() && interaction.customId.startsWith('run_now_')) {
         const id = interaction.customId.substring(8);
 
         if (!spammers[id]) {
             await interaction.reply({ content: `❌ \`${id}\` לא נמצא`, ephemeral: true });
+            return;
+        }
+
+        if (spammers[id].ownerId !== interaction.user.id) {
+            await interaction.reply({ content: '❌ זה לא הספאמר שלך', ephemeral: true });
             return;
         }
 
@@ -519,6 +675,7 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // ===== מחק ספאמר =====
     if (interaction.isButton() && interaction.customId.startsWith('del_spam_')) {
         const id = interaction.customId.substring(9);
 
@@ -561,7 +718,11 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // ===== הודעה למבקש =====
+        // ניכוי קרדיטים מהמבקש
+        const u = getUser(request.userId);
+        u.credits = Math.max(0, u.credits - parseInt(request.credits));
+        saveUsers();
+
         try {
             if (request.userInteraction) {
                 await request.userInteraction.editReply({
@@ -570,9 +731,7 @@ bot.on('interactionCreate', async (interaction) => {
                     components: []
                 });
             }
-        } catch (e) {
-            console.log(`[-] Failed to edit user message: ${e.message}`);
-        }
+        } catch (e) {}
 
         if (request.scheduled) {
             const id = `spam_${request.phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
@@ -590,7 +749,7 @@ bot.on('interactionCreate', async (interaction) => {
             try {
                 if (request.userInteraction) {
                     await request.userInteraction.editReply({
-                        content: `✅ **הספאם המתוזמן נוצר!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}`
+                        content: `✅ **הספאם המתוזמן נוצר!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}\n\n💳 יתרה: **${u.credits}**`
                     });
                 }
             } catch (e) {}
@@ -722,13 +881,16 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
             ? `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
             : 'מיידי';
 
+        const u = getUser(request.userId);
+
         const embed = new EmbedBuilder()
             .setTitle('🔔 בקשת ספאם חדשה')
             .addFields(
                 { name: '👤 מבקש', value: `${userInteraction.user.tag}`, inline: true },
                 { name: '🎯 טלפון', value: phone, inline: true },
                 { name: '💳 קרדיטים', value: String(credits), inline: true },
-                { name: '🕐 שעה', value: timeStr, inline: true }
+                { name: '🕐 שעה', value: timeStr, inline: true },
+                { name: '💰 יתרה אחרי', value: `${u.credits - parseInt(credits)}`, inline: true }
             )
             .setColor(0xFF6B00)
             .setFooter({ text: 'יש לך 10 דקות לאשר או לדחות' });
@@ -764,8 +926,6 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                         components: []
                     });
                 } catch (e) {}
-
-                console.log(`[+] Request timed out: ${requestId}`);
             }
         }, APPROVAL_TIMEOUT_MS);
 
@@ -774,7 +934,8 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
             .setDescription(
                 `**🎯 טלפון:** ${phone}\n` +
                 `**💳 קרדיטים:** ${credits}\n` +
-                `**🕐 שעה:** ${timeStr}\n\n` +
+                `**🕐 שעה:** ${timeStr}\n` +
+                `**💰 היתרה שלך:** ${u.credits}\n\n` +
                 `ממתין לאישור...\n` +
                 `תוכל לבטל את הבקשה בכל רגע.`
             )
