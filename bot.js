@@ -56,6 +56,41 @@ function hasUnlimited(userId) {
     return UNLIMITED_IDS.includes(userId);
 }
 
+// ===== מציאת משתמש לפי שם =====
+async function findUserByName(guild, name) {
+    const cleanName = name.replace(/^@/, '').trim().toLowerCase();
+
+    // חיפוש ב-cache
+    let member = guild.members.cache.find(m =>
+        m.user.username.toLowerCase() === cleanName ||
+        m.user.tag.toLowerCase() === cleanName ||
+        m.displayName.toLowerCase() === cleanName
+    );
+
+    if (member) return member;
+
+    // חיפוש ברשימה המלאה
+    try {
+        const members = await guild.members.fetch();
+        member = members.find(m =>
+            m.user.username.toLowerCase() === cleanName ||
+            m.user.tag.toLowerCase() === cleanName ||
+            m.displayName.toLowerCase() === cleanName
+        );
+        if (member) return member;
+    } catch (e) {
+        console.log(`[-] Failed to fetch members: ${e.message}`);
+    }
+
+    // חיפוש חלקי
+    member = guild.members.cache.find(m =>
+        m.user.username.toLowerCase().includes(cleanName) ||
+        m.displayName.toLowerCase().includes(cleanName)
+    );
+
+    return member || null;
+}
+
 function isValidPhone(phone) {
     const cleaned = phone.replace(/[\s\-()]/g, '');
     return /^[0-9+]{9,15}$/.test(cleaned) && /^[0+]/.test(cleaned);
@@ -243,15 +278,13 @@ const bot = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMembers
     ]
 });
 
 bot.on('ready', () => {
     console.log(`[+] Bot: ${bot.user.tag}`);
-    console.log(`[+] Owner: ${OWNER_ID}`);
-    console.log(`[+] Unlimited users: ${UNLIMITED_IDS.join(', ') || 'none'}`);
-    console.log(`[+] Manage channel: ${MANAGE_CHANNEL_ID}`);
 });
 
 async function purgeDMMessages(channel) {
@@ -298,6 +331,41 @@ async function sendCreditsPanel(channel) {
     await channel.send({ embeds: [embed], components: [row] });
 }
 
+// ========== פאנל ניהול ==========
+async function sendManagePanel(channel) {
+    const embed = new EmbedBuilder()
+        .setTitle('💳 Credit Manager')
+        .setDescription(
+            '**נהל קרדיטים למשתמשים**\n\n' +
+            '💳 **קבע קרדיטים** — קובע יתרה חדשה\n' +
+            '➕ **הוסף קרדיטים** — מוסיף ליתרה קיימת\n' +
+            '∞ **אין סוף** — מדליק/מכבה אין סוף'
+        )
+        .setColor(0x5865F2)
+        .setFooter({ text: `© ${OWNER_NAME}` });
+
+    const row = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('menu_set_credits')
+                .setLabel('קבע קרדיטים')
+                .setEmoji('💳')
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId('menu_add_credits')
+                .setLabel('הוסף קרדיטים')
+                .setEmoji('➕')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId('menu_toggle_unlimited')
+                .setLabel('אין סוף')
+                .setEmoji('∞')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+    await channel.send({ embeds: [embed], components: [row] });
+}
+
 bot.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -309,57 +377,6 @@ bot.on('messageCreate', async (message) => {
         try {
             await notification.edit(`✅ נמחקו **${deleted}** הודעות.`);
         } catch (e) {}
-        return;
-    }
-
-    // ===== פקודות ב-DM =====
-    if (message.channel.type === 1) {
-        // פקודות !manage ב-DM
-        if (message.content.startsWith('!manage ')) {
-            if (message.author.id !== OWNER_ID) {
-                await message.channel.send('❌ רק הבעלים יכול להשתמש בפקודה הזו');
-                return;
-            }
-
-            const target = message.mentions.users.first();
-            if (!target) {
-                await message.channel.send('❌ שימוש: `!manage @user` (תייג מישהו אמיתי!)');
-                return;
-            }
-
-            const u = getUser(target.id);
-            const isUnlimited = hasUnlimited(target.id);
-
-            const embed = new EmbedBuilder()
-                .setTitle(`👤 ניהול קרדיטים — ${target.tag}`)
-                .setDescription(
-                    `**🆔 ID:** \`${target.id}\`\n` +
-                    `**💳 יתרה:** ${isUnlimited ? '∞ **אין סוף**' : `**${u.credits}** קרדיטים`}\n` +
-                    `**📊 סה"כ נצבר:** **${u.totalClaimed || 0}**\n\n` +
-                    `בחר פעולה:`
-                )
-                .setColor(0x5865F2)
-                .setFooter({ text: `© ${OWNER_NAME}` });
-
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`set_credits_${target.id}`)
-                        .setLabel('💳 קבע קרדיטים')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId(`toggle_unlimited_${target.id}`)
-                        .setLabel(isUnlimited ? '∞ הסר אין סוף' : '∞ הוסף אין סוף')
-                        .setStyle(isUnlimited ? ButtonStyle.Danger : ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId(`add_credits_${target.id}`)
-                        .setLabel('➕ הוסף קרדיטים')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-
-            await message.channel.send({ embeds: [embed], components: [row] });
-            return;
-        }
         return;
     }
 
@@ -380,50 +397,10 @@ bot.on('messageCreate', async (message) => {
 
     // ===== פקודות בחדר ניהול =====
     if (isManageChannel) {
-        if (message.content.startsWith('!manage ')) {
-            if (message.author.id !== OWNER_ID) {
-                await message.channel.send('❌ רק הבעלים יכול להשתמש בפקודה הזו');
-                return;
-            }
+        if (message.author.id !== OWNER_ID) return;
 
-            const target = message.mentions.users.first();
-            if (!target) {
-                await message.channel.send('❌ שימוש: `!manage @user` (תייג מישהו אמיתי!)');
-                return;
-            }
-
-            const u = getUser(target.id);
-            const isUnlimited = hasUnlimited(target.id);
-
-            const embed = new EmbedBuilder()
-                .setTitle(`👤 ניהול קרדיטים — ${target.tag}`)
-                .setDescription(
-                    `**🆔 ID:** \`${target.id}\`\n` +
-                    `**💳 יתרה:** ${isUnlimited ? '∞ **אין סוף**' : `**${u.credits}** קרדיטים`}\n` +
-                    `**📊 סה"כ נצבר:** **${u.totalClaimed || 0}**\n\n` +
-                    `בחר פעולה:`
-                )
-                .setColor(0x5865F2)
-                .setFooter({ text: `© ${OWNER_NAME}` });
-
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`set_credits_${target.id}`)
-                        .setLabel('💳 קבע קרדיטים')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId(`toggle_unlimited_${target.id}`)
-                        .setLabel(isUnlimited ? '∞ הסר אין סוף' : '∞ הוסף אין סוף')
-                        .setStyle(isUnlimited ? ButtonStyle.Danger : ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId(`add_credits_${target.id}`)
-                        .setLabel('➕ הוסף קרדיטים')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-
-            await message.channel.send({ embeds: [embed], components: [row] });
-            return;
+        if (message.content === '!menu' || message.content === '!credits-menu') {
+            await sendManagePanel(message.channel);
         }
         return;
     }
@@ -470,11 +447,11 @@ bot.on('messageCreate', async (message) => {
     if (message.content === '!help') {
         await message.channel.send(
             '**🤖 פקודות:**\n\n' +
-            '`!panel` — שלח פאנל עם כפתורים\n' +
+            '`!panel` — שלח פאנל ספאם\n' +
             '`!credits-panel` — שלח פאנל קרדיטים יומי\n' +
-            '`!manage @user` — נהל קרדיטים של משתמש (בעלים)\n' +
-            '`!transfer @user <amount>` — העבר קרדיטים מהחשבון שלך\n' +
-            '`!list` — הצג את כל הספאמרים\n' +
+            '`!menu` — שלח פאנל ניהול (בחדר manage)\n' +
+            '`!transfer @user <amount>` — העבר קרדיטים\n' +
+            '`!list` — הצג ספאמרים\n' +
             '`!remove <id>` — מחק ספאמר'
         );
     }
@@ -505,18 +482,14 @@ bot.on('messageCreate', async (message) => {
 
         const receiver = getUser(target.id);
 
-        if (!senderUnlimited) {
-            sender.credits -= amount;
-        }
+        if (!senderUnlimited) sender.credits -= amount;
         receiver.credits += amount;
         saveUsers();
 
         await message.channel.send(
             `✅ **העברה בוצעה!**\n\n` +
             `📤 שלחת: **${amount}** קרדיטים ל-${target.tag}\n` +
-            (senderUnlimited
-                ? `💳 היתרה שלך: **∞**`
-                : `💳 היתרה שלך: **${sender.credits}**`) +
+            (senderUnlimited ? `💳 היתרה שלך: **∞**` : `💳 היתרה שלך: **${sender.credits}**`) +
             `\n💳 היתרה של ${target.tag}: **${receiver.credits}**`
         );
     }
@@ -549,6 +522,206 @@ bot.on('messageCreate', async (message) => {
 
 // ========== INTERACTIONS ==========
 bot.on('interactionCreate', async (interaction) => {
+
+    // ===== פאנל ניהול — כפתור קבע קרדיטים =====
+    if (interaction.isButton() && interaction.customId === 'menu_set_credits') {
+        if (interaction.user.id !== OWNER_ID) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const modal = new ModalBuilder()
+            .setCustomId('menu_set_credits_modal')
+            .setTitle('קבע קרדיטים');
+
+        const nameInput = new TextInputBuilder()
+            .setCustomId('name')
+            .setLabel('שם המשתמש')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('MRzeno')
+            .setRequired(true)
+            .setMaxLength(50);
+
+        const amountInput = new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel('כמות קרדיטים')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('100')
+            .setRequired(true)
+            .setMaxLength(6);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(nameInput),
+            new ActionRowBuilder().addComponents(amountInput)
+        );
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    // ===== טופס: קבע קרדיטים =====
+    if (interaction.isModalSubmit() && interaction.customId === 'menu_set_credits_modal') {
+        if (interaction.user.id !== OWNER_ID) return;
+
+        const name = interaction.fields.getTextInputValue('name').trim();
+        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
+
+        if (!/^\d{1,6}$/.test(amountRaw)) {
+            await interaction.reply({ content: '❌ כמות חייבת להיות מספר בלבד', ephemeral: true });
+            return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const guild = interaction.guild;
+        const member = await findUserByName(guild, name);
+
+        if (!member) {
+            await interaction.editReply({ content: `❌ לא מצאתי משתמש בשם \`${name}\`` });
+            return;
+        }
+
+        const amount = parseInt(amountRaw);
+        const u = getUser(member.id);
+        u.credits = amount;
+        saveUsers();
+
+        await interaction.editReply({
+            content: `✅ **קרדיטים נקבעו**\n\n👤 ${member.user.tag}\n💳 **${amount}** קרדיטים`
+        });
+        return;
+    }
+
+    // ===== פאנל ניהול — כפתור הוסף קרדיטים =====
+    if (interaction.isButton() && interaction.customId === 'menu_add_credits') {
+        if (interaction.user.id !== OWNER_ID) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const modal = new ModalBuilder()
+            .setCustomId('menu_add_credits_modal')
+            .setTitle('הוסף קרדיטים');
+
+        const nameInput = new TextInputBuilder()
+            .setCustomId('name')
+            .setLabel('שם המשתמש')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('MRzeno')
+            .setRequired(true)
+            .setMaxLength(50);
+
+        const amountInput = new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel('כמה להוסיף?')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('50')
+            .setRequired(true)
+            .setMaxLength(6);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(nameInput),
+            new ActionRowBuilder().addComponents(amountInput)
+        );
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    // ===== טופס: הוסף קרדיטים =====
+    if (interaction.isModalSubmit() && interaction.customId === 'menu_add_credits_modal') {
+        if (interaction.user.id !== OWNER_ID) return;
+
+        const name = interaction.fields.getTextInputValue('name').trim();
+        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
+
+        if (!/^\d{1,6}$/.test(amountRaw)) {
+            await interaction.reply({ content: '❌ כמות חייבת להיות מספר בלבד', ephemeral: true });
+            return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const guild = interaction.guild;
+        const member = await findUserByName(guild, name);
+
+        if (!member) {
+            await interaction.editReply({ content: `❌ לא מצאתי משתמש בשם \`${name}\`` });
+            return;
+        }
+
+        const amount = parseInt(amountRaw);
+        const u = getUser(member.id);
+        u.credits += amount;
+        saveUsers();
+
+        await interaction.editReply({
+            content: `✅ **נוספו ${amount} קרדיטים**\n\n👤 ${member.user.tag}\n💳 סה"כ: **${u.credits}**`
+        });
+        return;
+    }
+
+    // ===== פאנל ניהול — כפתור אין סוף =====
+    if (interaction.isButton() && interaction.customId === 'menu_toggle_unlimited') {
+        if (interaction.user.id !== OWNER_ID) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const modal = new ModalBuilder()
+            .setCustomId('menu_toggle_unlimited_modal')
+            .setTitle('אין סוף קרדיטים');
+
+        const nameInput = new TextInputBuilder()
+            .setCustomId('name')
+            .setLabel('שם המשתמש')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('MRzeno')
+            .setRequired(true)
+            .setMaxLength(50);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(nameInput));
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    // ===== טופס: אין סוף =====
+    if (interaction.isModalSubmit() && interaction.customId === 'menu_toggle_unlimited_modal') {
+        if (interaction.user.id !== OWNER_ID) return;
+
+        const name = interaction.fields.getTextInputValue('name').trim();
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const guild = interaction.guild;
+        const member = await findUserByName(guild, name);
+
+        if (!member) {
+            await interaction.editReply({ content: `❌ לא מצאתי משתמש בשם \`${name}\`` });
+            return;
+        }
+
+        if (member.id === OWNER_ID) {
+            await interaction.editReply({ content: '❌ לך כבר יש אין סוף' });
+            return;
+        }
+
+        const idx = UNLIMITED_IDS.indexOf(member.id);
+
+        if (idx !== -1) {
+            UNLIMITED_IDS.splice(idx, 1);
+            await interaction.editReply({
+                content: `❌ **הוסר אין סוף**\n\n👤 ${member.user.tag}`
+            });
+        } else {
+            UNLIMITED_IDS.push(member.id);
+            await interaction.editReply({
+                content: `∞ **נוסף אין סוף**\n\n👤 ${member.user.tag}`
+            });
+        }
+        return;
+    }
 
     // ===== Claim Credits =====
     if (interaction.isButton() && interaction.customId === 'claim_credits') {
@@ -851,183 +1024,6 @@ bot.on('interactionCreate', async (interaction) => {
             content: `🗑️ ספאמר \`${id}\` **בוטל ונמחק**.`,
             ephemeral: true
         });
-        return;
-    }
-
-    // ===== כפתור: קבע קרדיטים =====
-    if (interaction.isButton() && interaction.customId.startsWith('set_credits_')) {
-        if (interaction.user.id !== OWNER_ID) {
-            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
-            return;
-        }
-
-        const targetId = interaction.customId.substring(12);
-
-        const modal = new ModalBuilder()
-            .setCustomId(`set_credits_modal_${targetId}`)
-            .setTitle('קבע קרדיטים');
-
-        const amountInput = new TextInputBuilder()
-            .setCustomId('amount')
-            .setLabel('מספר קרדיטים (0 = איפוס)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('100')
-            .setRequired(true)
-            .setMaxLength(6);
-
-        modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
-
-        await interaction.showModal(modal);
-        return;
-    }
-
-    // ===== טופס: קבע קרדיטים =====
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('set_credits_modal_')) {
-        if (interaction.user.id !== OWNER_ID) {
-            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
-            return;
-        }
-
-        const targetId = interaction.customId.substring(18);
-        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
-
-        if (!/^\d{1,6}$/.test(amountRaw)) {
-            await interaction.reply({ content: '❌ חייב להיות מספר בלבד', ephemeral: true });
-            return;
-        }
-
-        const amount = parseInt(amountRaw);
-        const u = getUser(targetId);
-        u.credits = amount;
-        saveUsers();
-
-        await interaction.reply({
-            content: `✅ **קרדיטים נקבעו**\n\n<@${targetId}> — **${amount}** קרדיטים`,
-            ephemeral: true
-        });
-        return;
-    }
-
-    // ===== כפתור: הוסף קרדיטים =====
-    if (interaction.isButton() && interaction.customId.startsWith('add_credits_')) {
-        if (interaction.user.id !== OWNER_ID) {
-            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
-            return;
-        }
-
-        const targetId = interaction.customId.substring(12);
-
-        const modal = new ModalBuilder()
-            .setCustomId(`add_credits_modal_${targetId}`)
-            .setTitle('הוסף קרדיטים');
-
-        const amountInput = new TextInputBuilder()
-            .setCustomId('amount')
-            .setLabel('כמה להוסיף?')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('50')
-            .setRequired(true)
-            .setMaxLength(6);
-
-        modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
-
-        await interaction.showModal(modal);
-        return;
-    }
-
-    // ===== טופס: הוסף קרדיטים =====
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('add_credits_modal_')) {
-        if (interaction.user.id !== OWNER_ID) {
-            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
-            return;
-        }
-
-        const targetId = interaction.customId.substring(18);
-        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
-
-        if (!/^\d{1,6}$/.test(amountRaw)) {
-            await interaction.reply({ content: '❌ חייב להיות מספר בלבד', ephemeral: true });
-            return;
-        }
-
-        const amount = parseInt(amountRaw);
-        const u = getUser(targetId);
-        u.credits += amount;
-        saveUsers();
-
-        await interaction.reply({
-            content: `✅ **נוספו ${amount} קרדיטים**\n\n<@${targetId}> — סה"כ: **${u.credits}**`,
-            ephemeral: true
-        });
-        return;
-    }
-
-    // ===== כפתור: אין סוף =====
-    if (interaction.isButton() && interaction.customId.startsWith('toggle_unlimited_')) {
-        if (interaction.user.id !== OWNER_ID) {
-            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
-            return;
-        }
-
-        const targetId = interaction.customId.substring(17);
-
-        if (targetId === OWNER_ID) {
-            await interaction.reply({ content: '❌ לך כבר יש אין סוף', ephemeral: true });
-            return;
-        }
-
-        const idx = UNLIMITED_IDS.indexOf(targetId);
-        const target = await bot.users.fetch(targetId);
-
-        if (idx !== -1) {
-            UNLIMITED_IDS.splice(idx, 1);
-            await interaction.reply({
-                content: `❌ **הוסר אין סוף**\n\n${target.tag} — חזר לקרדיטים רגילים`,
-                ephemeral: true
-            });
-        } else {
-            UNLIMITED_IDS.push(targetId);
-            await interaction.reply({
-                content: `∞ **נוסף אין סוף**\n\n${target.tag} — יש עכשיו אין סוף קרדיטים`,
-                ephemeral: true
-            });
-        }
-
-        try {
-            const u = getUser(targetId);
-            const isUnlimited = hasUnlimited(targetId);
-
-            const newEmbed = new EmbedBuilder()
-                .setTitle(`👤 ניהול קרדיטים — ${target.tag}`)
-                .setDescription(
-                    `**🆔 ID:** \`${target.id}\`\n` +
-                    `**💳 יתרה:** ${isUnlimited ? '∞ **אין סוף**' : `**${u.credits}** קרדיטים`}\n` +
-                    `**📊 סה"כ נצבר:** **${u.totalClaimed || 0}**\n\n` +
-                    `בחר פעולה:`
-                )
-                .setColor(0x5865F2)
-                .setFooter({ text: `© ${OWNER_NAME}` });
-
-            const newRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`set_credits_${target.id}`)
-                        .setLabel('💳 קבע קרדיטים')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId(`toggle_unlimited_${target.id}`)
-                        .setLabel(isUnlimited ? '∞ הסר אין סוף' : '∞ הוסף אין סוף')
-                        .setStyle(isUnlimited ? ButtonStyle.Danger : ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId(`add_credits_${target.id}`)
-                        .setLabel('➕ הוסף קרדיטים')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-
-            await interaction.message.edit({ embeds: [newEmbed], components: [newRow] });
-        } catch (e) {
-            console.log(`[-] Failed to update manage message: ${e.message}`);
-        }
         return;
     }
 
