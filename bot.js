@@ -13,6 +13,7 @@ const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
 const CREDITS_CHANNEL_ID = process.env.CREDITS_CHANNEL_ID;
 const MANAGE_CHANNEL_ID = process.env.MANAGE_CHANNEL_ID;
 const OWNER_ID = process.env.OWNER_ID;
+const APPROVER_IDS = (process.env.APPROVER_IDS || '').split(',').map(id => id.trim()).filter(id => id);
 const UNLIMITED_IDS = (process.env.UNLIMITED_IDS || '').split(',').map(id => id.trim()).filter(id => id);
 const OWNER_NAME = 'ᴹᴿZENO亗';
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
@@ -26,6 +27,17 @@ const CREDITS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 const pendingRequests = new Map();
 const cooldowns = new Map();
+
+// ===== כל המאשרים =====
+function getAllApprovers() {
+    const set = new Set([OWNER_ID, ...APPROVER_IDS]);
+    return [...set];
+}
+
+// ===== בדיקה אם משתמש הוא מאשר =====
+function isApprover(userId) {
+    return userId === OWNER_ID || APPROVER_IDS.includes(userId);
+}
 
 function loadJSON(file) {
     try {
@@ -282,10 +294,10 @@ const bot = new Client({
 bot.on('ready', () => {
     console.log(`[+] Bot: ${bot.user.tag}`);
     console.log(`[+] OWNER_ID: ${OWNER_ID}`);
+    console.log(`[+] APPROVER_IDS: ${APPROVER_IDS.join(', ') || 'none'}`);
     console.log(`[+] MANAGE_CHANNEL_ID: ${MANAGE_CHANNEL_ID}`);
     console.log(`[+] COMMAND_CHANNEL_ID: ${COMMAND_CHANNEL_ID}`);
     console.log(`[+] CREDITS_CHANNEL_ID: ${CREDITS_CHANNEL_ID}`);
-    console.log(`[+] FEEDBACK_CHANNEL_ID: ${FEEDBACK_CHANNEL_ID}`);
     console.log(`[+] UNLIMITED_IDS: ${UNLIMITED_IDS.join(', ') || 'none'}`);
 });
 
@@ -369,8 +381,6 @@ async function sendManagePanel(channel) {
 bot.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    console.log(`[DEBUG] Message in channel ${message.channel.id} from ${message.author.id}: ${message.content}`);
-
     if (message.channel.type === 1 && message.content === '!purge') {
         const notification = await message.channel.send('🧹 מוחק הודעות...');
         await new Promise(r => setTimeout(r, 1000));
@@ -385,8 +395,6 @@ bot.on('messageCreate', async (message) => {
     const isCreditsChannel = CREDITS_CHANNEL_ID && message.channel.id === CREDITS_CHANNEL_ID;
     const isManageChannel = MANAGE_CHANNEL_ID && message.channel.id === MANAGE_CHANNEL_ID;
 
-    console.log(`[DEBUG] isCommand: ${isCommandChannel}, isCredits: ${isCreditsChannel}, isManage: ${isManageChannel}`);
-
     if (!isCommandChannel && !isCreditsChannel && !isManageChannel) return;
 
     if (isCreditsChannel) {
@@ -397,11 +405,9 @@ bot.on('messageCreate', async (message) => {
     }
 
     if (isManageChannel) {
-        console.log(`[DEBUG] In manage channel. Author: ${message.author.id}, Owner: ${OWNER_ID}`);
-        if (message.author.id !== OWNER_ID) return;
+        if (!isApprover(message.author.id)) return;
 
         if (message.content === '!menu' || message.content === '!credits-menu') {
-            console.log(`[DEBUG] Sending manage panel...`);
             await sendManagePanel(message.channel);
         }
         return;
@@ -523,10 +529,8 @@ bot.on('messageCreate', async (message) => {
 // ========== INTERACTIONS ==========
 bot.on('interactionCreate', async (interaction) => {
 
-    console.log(`[DEBUG] Interaction: ${interaction.customId || 'unknown'} from ${interaction.user.id}`);
-
     if (interaction.isButton() && interaction.customId === 'menu_set_credits') {
-        if (interaction.user.id !== OWNER_ID) {
+        if (!isApprover(interaction.user.id)) {
             await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
             return;
         }
@@ -561,7 +565,7 @@ bot.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isModalSubmit() && interaction.customId === 'menu_set_credits_modal') {
-        if (interaction.user.id !== OWNER_ID) return;
+        if (!isApprover(interaction.user.id)) return;
 
         const name = interaction.fields.getTextInputValue('name').trim();
         const amountRaw = interaction.fields.getTextInputValue('amount').trim();
@@ -593,7 +597,7 @@ bot.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId === 'menu_add_credits') {
-        if (interaction.user.id !== OWNER_ID) {
+        if (!isApprover(interaction.user.id)) {
             await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
             return;
         }
@@ -628,7 +632,7 @@ bot.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isModalSubmit() && interaction.customId === 'menu_add_credits_modal') {
-        if (interaction.user.id !== OWNER_ID) return;
+        if (!isApprover(interaction.user.id)) return;
 
         const name = interaction.fields.getTextInputValue('name').trim();
         const amountRaw = interaction.fields.getTextInputValue('amount').trim();
@@ -660,7 +664,7 @@ bot.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId === 'menu_toggle_unlimited') {
-        if (interaction.user.id !== OWNER_ID) {
+        if (!isApprover(interaction.user.id)) {
             await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
             return;
         }
@@ -684,7 +688,7 @@ bot.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isModalSubmit() && interaction.customId === 'menu_toggle_unlimited_modal') {
-        if (interaction.user.id !== OWNER_ID) return;
+        if (!isApprover(interaction.user.id)) return;
 
         const name = interaction.fields.getTextInputValue('name').trim();
 
@@ -699,7 +703,7 @@ bot.on('interactionCreate', async (interaction) => {
         }
 
         if (member.id === OWNER_ID) {
-            await interaction.editReply({ content: '❌ לך כבר יש אין סוף' });
+            await interaction.editReply({ content: '❌ לו כבר יש אין סוף' });
             return;
         }
 
@@ -1016,7 +1020,13 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // ===== אישור =====
     if (interaction.isButton() && interaction.customId.startsWith('approve_')) {
+        if (!isApprover(interaction.user.id)) {
+            await interaction.reply({ content: '❌ אין לך הרשאה לאשר', ephemeral: true });
+            return;
+        }
+
         const requestId = interaction.customId.substring(8);
         const request = pendingRequests.get(requestId);
 
@@ -1033,6 +1043,18 @@ bot.on('interactionCreate', async (interaction) => {
             embeds: [],
             components: []
         });
+
+        // מעדכן את שאר המאשרים
+        for (const om of request.ownerMessages || []) {
+            if (om.userId === interaction.user.id) continue;
+            try {
+                await om.message.edit({
+                    content: `✅ **הבקשה אושרה על ידי ${interaction.user.tag}.**\n\n🎯 ${request.phone}`,
+                    embeds: [],
+                    components: []
+                });
+            } catch (e) {}
+        }
 
         const u = getUser(request.userId);
         const userUnlimited = hasUnlimited(request.userId);
@@ -1098,11 +1120,17 @@ bot.on('interactionCreate', async (interaction) => {
             }
         }
 
-        console.log(`[+] Approved: ${requestId}`);
+        console.log(`[+] Approved by ${interaction.user.tag}: ${requestId}`);
         return;
     }
 
+    // ===== דחייה =====
     if (interaction.isButton() && interaction.customId.startsWith('deny_')) {
+        if (!isApprover(interaction.user.id)) {
+            await interaction.reply({ content: '❌ אין לך הרשאה לדחות', ephemeral: true });
+            return;
+        }
+
         const requestId = interaction.customId.substring(5);
         const request = pendingRequests.get(requestId);
 
@@ -1120,20 +1148,33 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
+        // מעדכן את שאר המאשרים
+        for (const om of request.ownerMessages || []) {
+            if (om.userId === interaction.user.id) continue;
+            try {
+                await om.message.edit({
+                    content: `❌ **הבקשה נדחתה על ידי ${interaction.user.tag}.**\n\n🎯 ${request.phone}`,
+                    embeds: [],
+                    components: []
+                });
+            } catch (e) {}
+        }
+
         try {
             if (request.userInteraction) {
                 await request.userInteraction.editReply({
-                    content: `❌ **הבקשה נדחתה על ידי ${OWNER_NAME}.**`,
+                    content: `❌ **הבקשה נדחתה על ידי ${interaction.user.tag}.**`,
                     embeds: [],
                     components: []
                 });
             }
         } catch (e) {}
 
-        console.log(`[+] Denied: ${requestId}`);
+        console.log(`[+] Denied by ${interaction.user.tag}: ${requestId}`);
         return;
     }
 
+    // ===== בטל בקשה =====
     if (interaction.isButton() && interaction.customId.startsWith('cancel_request_')) {
         const requestId = interaction.customId.substring(15);
         const request = pendingRequests.get(requestId);
@@ -1157,21 +1198,22 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        try {
-            if (request.ownerMessage) {
-                await request.ownerMessage.edit({
+        for (const om of request.ownerMessages || []) {
+            try {
+                await om.message.edit({
                     content: `🚫 **המבקש ביטל את הבקשה.**\n\n🎯 ${request.phone}\n👤 ${request.userTag}`,
                     embeds: [],
                     components: []
                 });
-            }
-        } catch (e) {}
+            } catch (e) {}
+        }
 
         console.log(`[+] Cancelled by user: ${requestId}`);
         return;
     }
 });
 
+// ========== בקשת אישור ==========
 async function requestApproval(userInteraction, phone, credits, scheduled, id, hour = null, minute = null) {
     const requestId = Date.now().toString() + Math.random().toString(36).substring(2, 8);
 
@@ -1185,14 +1227,14 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
         hour,
         minute,
         createdAt: Date.now(),
-        ownerMessage: null,
+        ownerMessages: [],
         ownerTimeout: null
     };
 
     pendingRequests.set(requestId, request);
 
     try {
-        const owner = await bot.users.fetch(OWNER_ID);
+        const approvers = getAllApprovers();
 
         const timeStr = scheduled
             ? `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
@@ -1225,21 +1267,32 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                     .setStyle(ButtonStyle.Danger)
             );
 
-        const ownerMsg = await owner.send({ embeds: [embed], components: [row] });
-        request.ownerMessage = ownerMsg;
+        // שולח לכל המאשרים
+        for (const approverId of approvers) {
+            try {
+                const approver = await bot.users.fetch(approverId);
+                const msg = await approver.send({ embeds: [embed], components: [row] });
+                request.ownerMessages.push({ userId: approverId, message: msg });
+            } catch (e) {
+                console.log(`[-] Failed to DM ${approverId}: ${e.message}`);
+            }
+        }
 
+        // Timeout
         request.ownerTimeout = setTimeout(async () => {
             const stillPending = pendingRequests.get(requestId);
             if (stillPending) {
                 pendingRequests.delete(requestId);
 
-                try {
-                    await ownerMsg.delete();
-                } catch (e) {}
+                for (const om of request.ownerMessages) {
+                    try {
+                        await om.message.delete();
+                    } catch (e) {}
+                }
 
                 try {
                     await userInteraction.editReply({
-                        content: `⌛ **הבקשה פגה** — ${OWNER_NAME} לא הגיב תוך 10 דקות.`,
+                        content: `⌛ **הבקשה פגה** — לא התקבל אישור תוך 10 דקות.`,
                         embeds: [],
                         components: []
                     });
@@ -1248,7 +1301,7 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
         }, APPROVAL_TIMEOUT_MS);
 
         const userEmbed = new EmbedBuilder()
-            .setTitle(`⏳ הבקשה נשלחה ל${OWNER_NAME}`)
+            .setTitle(`⏳ הבקשה נשלחה לאישור`)
             .setDescription(
                 `**🎯 טלפון:** ${phone}\n` +
                 `**💳 קרדיטים:** ${credits}\n` +
