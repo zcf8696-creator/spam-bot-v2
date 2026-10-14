@@ -11,6 +11,7 @@ const MESSAGE_ID = process.env.MESSAGE_ID;
 const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID;
 const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
 const CREDITS_CHANNEL_ID = process.env.CREDITS_CHANNEL_ID;
+const MANAGE_CHANNEL_ID = process.env.MANAGE_CHANNEL_ID;
 const OWNER_ID = process.env.OWNER_ID;
 const UNLIMITED_IDS = (process.env.UNLIMITED_IDS || '').split(',').map(id => id.trim()).filter(id => id);
 const OWNER_NAME = 'ᴹᴿZENO亗';
@@ -250,6 +251,7 @@ bot.on('ready', () => {
     console.log(`[+] Bot: ${bot.user.tag}`);
     console.log(`[+] Owner: ${OWNER_ID}`);
     console.log(`[+] Unlimited users: ${UNLIMITED_IDS.join(', ') || 'none'}`);
+    console.log(`[+] Manage channel: ${MANAGE_CHANNEL_ID}`);
 });
 
 async function purgeDMMessages(channel) {
@@ -310,16 +312,118 @@ bot.on('messageCreate', async (message) => {
         return;
     }
 
+    // ===== פקודות ב-DM =====
+    if (message.channel.type === 1) {
+        // פקודות !manage ב-DM
+        if (message.content.startsWith('!manage ')) {
+            if (message.author.id !== OWNER_ID) {
+                await message.channel.send('❌ רק הבעלים יכול להשתמש בפקודה הזו');
+                return;
+            }
+
+            const target = message.mentions.users.first();
+            if (!target) {
+                await message.channel.send('❌ שימוש: `!manage @user` (תייג מישהו אמיתי!)');
+                return;
+            }
+
+            const u = getUser(target.id);
+            const isUnlimited = hasUnlimited(target.id);
+
+            const embed = new EmbedBuilder()
+                .setTitle(`👤 ניהול קרדיטים — ${target.tag}`)
+                .setDescription(
+                    `**🆔 ID:** \`${target.id}\`\n` +
+                    `**💳 יתרה:** ${isUnlimited ? '∞ **אין סוף**' : `**${u.credits}** קרדיטים`}\n` +
+                    `**📊 סה"כ נצבר:** **${u.totalClaimed || 0}**\n\n` +
+                    `בחר פעולה:`
+                )
+                .setColor(0x5865F2)
+                .setFooter({ text: `© ${OWNER_NAME}` });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`set_credits_${target.id}`)
+                        .setLabel('💳 קבע קרדיטים')
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId(`toggle_unlimited_${target.id}`)
+                        .setLabel(isUnlimited ? '∞ הסר אין סוף' : '∞ הוסף אין סוף')
+                        .setStyle(isUnlimited ? ButtonStyle.Danger : ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`add_credits_${target.id}`)
+                        .setLabel('➕ הוסף קרדיטים')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await message.channel.send({ embeds: [embed], components: [row] });
+            return;
+        }
+        return;
+    }
+
     // ===== בדיקת חדרים =====
     const isCommandChannel = message.channel.id === COMMAND_CHANNEL_ID;
     const isCreditsChannel = CREDITS_CHANNEL_ID && message.channel.id === CREDITS_CHANNEL_ID;
+    const isManageChannel = MANAGE_CHANNEL_ID && message.channel.id === MANAGE_CHANNEL_ID;
 
-    if (!isCommandChannel && !isCreditsChannel) return;
+    if (!isCommandChannel && !isCreditsChannel && !isManageChannel) return;
 
     // ===== פקודות בחדר קרדיטים =====
     if (isCreditsChannel) {
         if (message.content === '!credits-panel') {
             await sendCreditsPanel(message.channel);
+        }
+        return;
+    }
+
+    // ===== פקודות בחדר ניהול =====
+    if (isManageChannel) {
+        if (message.content.startsWith('!manage ')) {
+            if (message.author.id !== OWNER_ID) {
+                await message.channel.send('❌ רק הבעלים יכול להשתמש בפקודה הזו');
+                return;
+            }
+
+            const target = message.mentions.users.first();
+            if (!target) {
+                await message.channel.send('❌ שימוש: `!manage @user` (תייג מישהו אמיתי!)');
+                return;
+            }
+
+            const u = getUser(target.id);
+            const isUnlimited = hasUnlimited(target.id);
+
+            const embed = new EmbedBuilder()
+                .setTitle(`👤 ניהול קרדיטים — ${target.tag}`)
+                .setDescription(
+                    `**🆔 ID:** \`${target.id}\`\n` +
+                    `**💳 יתרה:** ${isUnlimited ? '∞ **אין סוף**' : `**${u.credits}** קרדיטים`}\n` +
+                    `**📊 סה"כ נצבר:** **${u.totalClaimed || 0}**\n\n` +
+                    `בחר פעולה:`
+                )
+                .setColor(0x5865F2)
+                .setFooter({ text: `© ${OWNER_NAME}` });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`set_credits_${target.id}`)
+                        .setLabel('💳 קבע קרדיטים')
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId(`toggle_unlimited_${target.id}`)
+                        .setLabel(isUnlimited ? '∞ הסר אין סוף' : '∞ הוסף אין סוף')
+                        .setStyle(isUnlimited ? ButtonStyle.Danger : ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`add_credits_${target.id}`)
+                        .setLabel('➕ הוסף קרדיטים')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await message.channel.send({ embeds: [embed], components: [row] });
+            return;
         }
         return;
     }
@@ -369,80 +473,10 @@ bot.on('messageCreate', async (message) => {
             '`!panel` — שלח פאנל עם כפתורים\n' +
             '`!credits-panel` — שלח פאנל קרדיטים יומי\n' +
             '`!manage @user` — נהל קרדיטים של משתמש (בעלים)\n' +
-            '`!give <@user> <amount>` — תן קרדיטים (בעלים)\n' +
-            '`!transfer <@user> <amount>` — העבר קרדיטים מהחשבון שלך\n' +
+            '`!transfer @user <amount>` — העבר קרדיטים מהחשבון שלך\n' +
             '`!list` — הצג את כל הספאמרים\n' +
             '`!remove <id>` — מחק ספאמר'
         );
-    }
-
-    // ===== !manage @user =====
-    if (message.content.startsWith('!manage ')) {
-        if (message.author.id !== OWNER_ID) {
-            await message.channel.send('❌ רק הבעלים יכול להשתמש בפקודה הזו');
-            return;
-        }
-
-        const target = message.mentions.users.first();
-        if (!target) {
-            await message.channel.send('❌ שימוש: `!manage @user`');
-            return;
-        }
-
-        const u = getUser(target.id);
-        const isUnlimited = hasUnlimited(target.id);
-
-        const embed = new EmbedBuilder()
-            .setTitle(`👤 ניהול קרדיטים — ${target.tag}`)
-            .setDescription(
-                `**🆔 ID:** \`${target.id}\`\n` +
-                `**💳 יתרה:** ${isUnlimited ? '∞ **אין סוף**' : `**${u.credits}** קרדיטים`}\n` +
-                `**📊 סה"כ נצבר:** **${u.totalClaimed || 0}**\n\n` +
-                `בחר פעולה:`
-            )
-            .setColor(0x5865F2)
-            .setFooter({ text: `© ${OWNER_NAME}` });
-
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`set_credits_${target.id}`)
-                    .setLabel('💳 קבע קרדיטים')
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId(`toggle_unlimited_${target.id}`)
-                    .setLabel(isUnlimited ? '∞ הסר אין סוף' : '∞ הוסף אין סוף')
-                    .setStyle(isUnlimited ? ButtonStyle.Danger : ButtonStyle.Success),
-                new ButtonBuilder()
-                    .setCustomId(`add_credits_${target.id}`)
-                    .setLabel('➕ הוסף קרדיטים')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
-        await message.channel.send({ embeds: [embed], components: [row] });
-        return;
-    }
-
-    // ===== !give =====
-    if (message.content.startsWith('!give ')) {
-        if (!hasUnlimited(message.author.id)) {
-            await message.channel.send('❌ רק הבעלים או מורשים יכולים להשתמש בפקודה הזו');
-            return;
-        }
-        const parts = message.content.split(/\s+/);
-        const target = message.mentions.users.first();
-        const amount = parseInt(parts[2]);
-
-        if (!target || isNaN(amount) || amount <= 0) {
-            await message.channel.send('❌ שימוש: `!give @user <amount>`');
-            return;
-        }
-
-        const u = getUser(target.id);
-        u.credits += amount;
-        saveUsers();
-
-        await message.channel.send(`✅ נתת **${amount}** קרדיטים ל-${target.tag}\n💳 סה"כ: **${u.credits}**`);
     }
 
     // ===== !transfer =====
@@ -959,7 +993,6 @@ bot.on('interactionCreate', async (interaction) => {
             });
         }
 
-        // מעדכן את הודעת הניהול
         try {
             const u = getUser(targetId);
             const isUnlimited = hasUnlimited(targetId);
