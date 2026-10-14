@@ -12,6 +12,7 @@ const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID;
 const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
 const CREDITS_CHANNEL_ID = process.env.CREDITS_CHANNEL_ID;
 const OWNER_ID = process.env.OWNER_ID;
+const UNLIMITED_IDS = (process.env.UNLIMITED_IDS || '').split(',').map(id => id.trim()).filter(id => id);
 const OWNER_NAME = 'ᴹᴿZENO亗';
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
 const PORT = process.env.PORT || 8080;
@@ -47,6 +48,11 @@ function getUser(userId) {
         users[userId] = { credits: 0, lastClaim: 0, totalClaimed: 0 };
     }
     return users[userId];
+}
+
+function hasUnlimited(userId) {
+    if (userId === OWNER_ID) return true;
+    return UNLIMITED_IDS.includes(userId);
 }
 
 function isValidPhone(phone) {
@@ -242,6 +248,8 @@ const bot = new Client({
 
 bot.on('ready', () => {
     console.log(`[+] Bot: ${bot.user.tag}`);
+    console.log(`[+] Owner: ${OWNER_ID}`);
+    console.log(`[+] Unlimited users: ${UNLIMITED_IDS.join(', ') || 'none'}`);
 });
 
 async function purgeDMMessages(channel) {
@@ -270,7 +278,6 @@ async function purgeDMMessages(channel) {
     return deleted;
 }
 
-// ========== פאנל קרדיטים יומי ==========
 async function sendCreditsPanel(channel) {
     const embed = new EmbedBuilder()
         .setTitle('🎁 Free Gift!')
@@ -360,23 +367,73 @@ bot.on('messageCreate', async (message) => {
         await message.channel.send(
             '**🤖 פקודות:**\n\n' +
             '`!panel` — שלח פאנל עם כפתורים\n' +
-            '`!credits-panel` — שלח פאנל קרדיטים יומי (בחדר daily-credits)\n' +
-            '`!give <@user> <amount>` — תן קרדיטים (בעלים בלבד)\n' +
+            '`!credits-panel` — שלח פאנל קרדיטים יומי\n' +
+            '`!manage @user` — נהל קרדיטים של משתמש (בעלים)\n' +
+            '`!give <@user> <amount>` — תן קרדיטים (בעלים)\n' +
+            '`!transfer <@user> <amount>` — העבר קרדיטים מהחשבון שלך\n' +
             '`!list` — הצג את כל הספאמרים\n' +
             '`!remove <id>` — מחק ספאמר'
         );
     }
 
-    if (message.content.startsWith('!give ')) {
+    // ===== !manage @user =====
+    if (message.content.startsWith('!manage ')) {
         if (message.author.id !== OWNER_ID) {
-            await message.channel.send('❌ רק הבעלים יכול לתת קרדיטים');
+            await message.channel.send('❌ רק הבעלים יכול להשתמש בפקודה הזו');
+            return;
+        }
+
+        const target = message.mentions.users.first();
+        if (!target) {
+            await message.channel.send('❌ שימוש: `!manage @user`');
+            return;
+        }
+
+        const u = getUser(target.id);
+        const isUnlimited = hasUnlimited(target.id);
+
+        const embed = new EmbedBuilder()
+            .setTitle(`👤 ניהול קרדיטים — ${target.tag}`)
+            .setDescription(
+                `**🆔 ID:** \`${target.id}\`\n` +
+                `**💳 יתרה:** ${isUnlimited ? '∞ **אין סוף**' : `**${u.credits}** קרדיטים`}\n` +
+                `**📊 סה"כ נצבר:** **${u.totalClaimed || 0}**\n\n` +
+                `בחר פעולה:`
+            )
+            .setColor(0x5865F2)
+            .setFooter({ text: `© ${OWNER_NAME}` });
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`set_credits_${target.id}`)
+                    .setLabel('💳 קבע קרדיטים')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId(`toggle_unlimited_${target.id}`)
+                    .setLabel(isUnlimited ? '∞ הסר אין סוף' : '∞ הוסף אין סוף')
+                    .setStyle(isUnlimited ? ButtonStyle.Danger : ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId(`add_credits_${target.id}`)
+                    .setLabel('➕ הוסף קרדיטים')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        await message.channel.send({ embeds: [embed], components: [row] });
+        return;
+    }
+
+    // ===== !give =====
+    if (message.content.startsWith('!give ')) {
+        if (!hasUnlimited(message.author.id)) {
+            await message.channel.send('❌ רק הבעלים או מורשים יכולים להשתמש בפקודה הזו');
             return;
         }
         const parts = message.content.split(/\s+/);
         const target = message.mentions.users.first();
         const amount = parseInt(parts[2]);
 
-        if (!target || isNaN(amount)) {
+        if (!target || isNaN(amount) || amount <= 0) {
             await message.channel.send('❌ שימוש: `!give @user <amount>`');
             return;
         }
@@ -386,6 +443,48 @@ bot.on('messageCreate', async (message) => {
         saveUsers();
 
         await message.channel.send(`✅ נתת **${amount}** קרדיטים ל-${target.tag}\n💳 סה"כ: **${u.credits}**`);
+    }
+
+    // ===== !transfer =====
+    if (message.content.startsWith('!transfer ')) {
+        const parts = message.content.split(/\s+/);
+        const target = message.mentions.users.first();
+        const amount = parseInt(parts[2]);
+
+        if (!target || isNaN(amount) || amount <= 0) {
+            await message.channel.send('❌ שימוש: `!transfer @user <amount>`');
+            return;
+        }
+
+        if (target.id === message.author.id) {
+            await message.channel.send('❌ לא ניתן להעביר לעצמך');
+            return;
+        }
+
+        const sender = getUser(message.author.id);
+        const senderUnlimited = hasUnlimited(message.author.id);
+
+        if (!senderUnlimited && sender.credits < amount) {
+            await message.channel.send(`❌ אין לך מספיק קרדיטים\n💳 יש לך: **${sender.credits}**`);
+            return;
+        }
+
+        const receiver = getUser(target.id);
+
+        if (!senderUnlimited) {
+            sender.credits -= amount;
+        }
+        receiver.credits += amount;
+        saveUsers();
+
+        await message.channel.send(
+            `✅ **העברה בוצעה!**\n\n` +
+            `📤 שלחת: **${amount}** קרדיטים ל-${target.tag}\n` +
+            (senderUnlimited
+                ? `💳 היתרה שלך: **∞**`
+                : `💳 היתרה שלך: **${sender.credits}**`) +
+            `\n💳 היתרה של ${target.tag}: **${receiver.credits}**`
+        );
     }
 
     if (message.content === '!list') {
@@ -419,6 +518,16 @@ bot.on('interactionCreate', async (interaction) => {
 
     // ===== Claim Credits =====
     if (interaction.isButton() && interaction.customId === 'claim_credits') {
+        if (hasUnlimited(interaction.user.id)) {
+            const embed = new EmbedBuilder()
+                .setTitle('∞ Unlimited Credits')
+                .setDescription('יש לך **אין סוף קרדיטים**. אין צורך לקליים.')
+                .setColor(0x2B2D31);
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
         const u = getUser(interaction.user.id);
         const now = Date.now();
         const timeSinceClaim = now - (u.lastClaim || 0);
@@ -456,6 +565,17 @@ bot.on('interactionCreate', async (interaction) => {
 
     // ===== הקרדיטים שלי =====
     if (interaction.isButton() && interaction.customId === 'my_credits') {
+        if (hasUnlimited(interaction.user.id)) {
+            const embed = new EmbedBuilder()
+                .setTitle('💳 הקרדיטים שלי')
+                .setDescription('∞ **אין סוף קרדיטים**')
+                .setColor(0x43b581)
+                .setFooter({ text: `© ${OWNER_NAME}` });
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
         const u = getUser(interaction.user.id);
         const now = Date.now();
         const timeSinceClaim = now - (u.lastClaim || 0);
@@ -584,11 +704,10 @@ bot.on('interactionCreate', async (interaction) => {
                 return;
             }
 
-            // ===== בדיקת קרדיטים =====
             const u = getUser(interaction.user.id);
             const creditsNum = parseInt(credits);
 
-            if (u.credits < creditsNum) {
+            if (!hasUnlimited(interaction.user.id) && u.credits < creditsNum) {
                 await interaction.editReply({
                     content: `❌ **אין לך מספיק קרדיטים**\n\n💳 יש לך: **${u.credits}**\n💳 צריך: **${creditsNum}**\n\n🎁 לך ל-<#${CREDITS_CHANNEL_ID}> כדי לקבל קרדיטים חינם.`
                 });
@@ -701,6 +820,184 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // ===== כפתור: קבע קרדיטים =====
+    if (interaction.isButton() && interaction.customId.startsWith('set_credits_')) {
+        if (interaction.user.id !== OWNER_ID) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const targetId = interaction.customId.substring(12);
+
+        const modal = new ModalBuilder()
+            .setCustomId(`set_credits_modal_${targetId}`)
+            .setTitle('קבע קרדיטים');
+
+        const amountInput = new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel('מספר קרדיטים (0 = איפוס)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('100')
+            .setRequired(true)
+            .setMaxLength(6);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    // ===== טופס: קבע קרדיטים =====
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('set_credits_modal_')) {
+        if (interaction.user.id !== OWNER_ID) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const targetId = interaction.customId.substring(18);
+        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
+
+        if (!/^\d{1,6}$/.test(amountRaw)) {
+            await interaction.reply({ content: '❌ חייב להיות מספר בלבד', ephemeral: true });
+            return;
+        }
+
+        const amount = parseInt(amountRaw);
+        const u = getUser(targetId);
+        u.credits = amount;
+        saveUsers();
+
+        await interaction.reply({
+            content: `✅ **קרדיטים נקבעו**\n\n<@${targetId}> — **${amount}** קרדיטים`,
+            ephemeral: true
+        });
+        return;
+    }
+
+    // ===== כפתור: הוסף קרדיטים =====
+    if (interaction.isButton() && interaction.customId.startsWith('add_credits_')) {
+        if (interaction.user.id !== OWNER_ID) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const targetId = interaction.customId.substring(12);
+
+        const modal = new ModalBuilder()
+            .setCustomId(`add_credits_modal_${targetId}`)
+            .setTitle('הוסף קרדיטים');
+
+        const amountInput = new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel('כמה להוסיף?')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('50')
+            .setRequired(true)
+            .setMaxLength(6);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    // ===== טופס: הוסף קרדיטים =====
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('add_credits_modal_')) {
+        if (interaction.user.id !== OWNER_ID) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const targetId = interaction.customId.substring(18);
+        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
+
+        if (!/^\d{1,6}$/.test(amountRaw)) {
+            await interaction.reply({ content: '❌ חייב להיות מספר בלבד', ephemeral: true });
+            return;
+        }
+
+        const amount = parseInt(amountRaw);
+        const u = getUser(targetId);
+        u.credits += amount;
+        saveUsers();
+
+        await interaction.reply({
+            content: `✅ **נוספו ${amount} קרדיטים**\n\n<@${targetId}> — סה"כ: **${u.credits}**`,
+            ephemeral: true
+        });
+        return;
+    }
+
+    // ===== כפתור: אין סוף =====
+    if (interaction.isButton() && interaction.customId.startsWith('toggle_unlimited_')) {
+        if (interaction.user.id !== OWNER_ID) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const targetId = interaction.customId.substring(17);
+
+        if (targetId === OWNER_ID) {
+            await interaction.reply({ content: '❌ לך כבר יש אין סוף', ephemeral: true });
+            return;
+        }
+
+        const idx = UNLIMITED_IDS.indexOf(targetId);
+        const target = await bot.users.fetch(targetId);
+
+        if (idx !== -1) {
+            UNLIMITED_IDS.splice(idx, 1);
+            await interaction.reply({
+                content: `❌ **הוסר אין סוף**\n\n${target.tag} — חזר לקרדיטים רגילים`,
+                ephemeral: true
+            });
+        } else {
+            UNLIMITED_IDS.push(targetId);
+            await interaction.reply({
+                content: `∞ **נוסף אין סוף**\n\n${target.tag} — יש עכשיו אין סוף קרדיטים`,
+                ephemeral: true
+            });
+        }
+
+        // מעדכן את הודעת הניהול
+        try {
+            const u = getUser(targetId);
+            const isUnlimited = hasUnlimited(targetId);
+
+            const newEmbed = new EmbedBuilder()
+                .setTitle(`👤 ניהול קרדיטים — ${target.tag}`)
+                .setDescription(
+                    `**🆔 ID:** \`${target.id}\`\n` +
+                    `**💳 יתרה:** ${isUnlimited ? '∞ **אין סוף**' : `**${u.credits}** קרדיטים`}\n` +
+                    `**📊 סה"כ נצבר:** **${u.totalClaimed || 0}**\n\n` +
+                    `בחר פעולה:`
+                )
+                .setColor(0x5865F2)
+                .setFooter({ text: `© ${OWNER_NAME}` });
+
+            const newRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`set_credits_${target.id}`)
+                        .setLabel('💳 קבע קרדיטים')
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId(`toggle_unlimited_${target.id}`)
+                        .setLabel(isUnlimited ? '∞ הסר אין סוף' : '∞ הוסף אין סוף')
+                        .setStyle(isUnlimited ? ButtonStyle.Danger : ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`add_credits_${target.id}`)
+                        .setLabel('➕ הוסף קרדיטים')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await interaction.message.edit({ embeds: [newEmbed], components: [newRow] });
+        } catch (e) {
+            console.log(`[-] Failed to update manage message: ${e.message}`);
+        }
+        return;
+    }
+
     // ===== אישור =====
     if (interaction.isButton() && interaction.customId.startsWith('approve_')) {
         const requestId = interaction.customId.substring(8);
@@ -720,10 +1017,13 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // ניכוי קרדיטים מהמבקש
         const u = getUser(request.userId);
-        u.credits = Math.max(0, u.credits - parseInt(request.credits));
-        saveUsers();
+        const userUnlimited = hasUnlimited(request.userId);
+
+        if (!userUnlimited) {
+            u.credits = Math.max(0, u.credits - parseInt(request.credits));
+            saveUsers();
+        }
 
         try {
             if (request.userInteraction) {
@@ -750,8 +1050,9 @@ bot.on('interactionCreate', async (interaction) => {
 
             try {
                 if (request.userInteraction) {
+                    const balanceStr = userUnlimited ? '∞' : u.credits;
                     await request.userInteraction.editReply({
-                        content: `✅ **הספאם המתוזמן נוצר!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}\n\n💳 יתרה: **${u.credits}**`
+                        content: `✅ **הספאם המתוזמן נוצר!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}\n\n💳 יתרה: **${balanceStr}**`
                     });
                 }
             } catch (e) {}
@@ -884,6 +1185,7 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
             : 'מיידי';
 
         const u = getUser(request.userId);
+        const userUnlimited = hasUnlimited(request.userId);
 
         const embed = new EmbedBuilder()
             .setTitle('🔔 בקשת ספאם חדשה')
@@ -892,7 +1194,7 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                 { name: '🎯 טלפון', value: phone, inline: true },
                 { name: '💳 קרדיטים', value: String(credits), inline: true },
                 { name: '🕐 שעה', value: timeStr, inline: true },
-                { name: '💰 יתרה אחרי', value: `${u.credits - parseInt(credits)}`, inline: true }
+                { name: '💰 יתרה אחרי', value: userUnlimited ? '∞' : String(u.credits - parseInt(credits)), inline: true }
             )
             .setColor(0xFF6B00)
             .setFooter({ text: 'יש לך 10 דקות לאשר או לדחות' });
@@ -937,7 +1239,7 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                 `**🎯 טלפון:** ${phone}\n` +
                 `**💳 קרדיטים:** ${credits}\n` +
                 `**🕐 שעה:** ${timeStr}\n` +
-                `**💰 היתרה שלך:** ${u.credits}\n\n` +
+                `**💰 היתרה שלך:** ${userUnlimited ? '∞' : u.credits}\n\n` +
                 `ממתין לאישור...\n` +
                 `תוכל לבטל את הבקשה בכל רגע.`
             )
