@@ -340,7 +340,7 @@ async function sendManagePanel(channel) {
             '**נהל קרדיטים למשתמשים**\n\n' +
             '💳 **קבע קרדיטים** — קובע יתרה חדשה\n' +
             '➕ **הוסף קרדיטים** — מוסיף ליתרה קיימת\n' +
-            '∞ **אין סוף** — מדליק/מכבה אין סוף'
+            '🔓 **אין סוף** — מדליק/מכבה אין סוף'
         )
         .setColor(0x5865F2)
         .setFooter({ text: `© ${OWNER_NAME}` });
@@ -360,7 +360,6 @@ async function sendManagePanel(channel) {
             new ButtonBuilder()
                 .setCustomId('menu_toggle_unlimited')
                 .setLabel('אין סוף')
-                .setEmoji('∞')
                 .setStyle(ButtonStyle.Danger)
         );
 
@@ -714,7 +713,7 @@ bot.on('interactionCreate', async (interaction) => {
         } else {
             UNLIMITED_IDS.push(member.id);
             await interaction.editReply({
-                content: `∞ **נוסף אין סוף**\n\n👤 ${member.user.tag}`
+                content: `🔓 **נוסף אין סוף**\n\n👤 ${member.user.tag}`
             });
         }
         return;
@@ -723,7 +722,7 @@ bot.on('interactionCreate', async (interaction) => {
     if (interaction.isButton() && interaction.customId === 'claim_credits') {
         if (hasUnlimited(interaction.user.id)) {
             const embed = new EmbedBuilder()
-                .setTitle('∞ Unlimited Credits')
+                .setTitle('Unlimited Credits')
                 .setDescription('יש לך **אין סוף קרדיטים**. אין צורך לקליים.')
                 .setColor(0x2B2D31);
 
@@ -770,7 +769,7 @@ bot.on('interactionCreate', async (interaction) => {
         if (hasUnlimited(interaction.user.id)) {
             const embed = new EmbedBuilder()
                 .setTitle('💳 הקרדיטים שלי')
-                .setDescription('∞ **אין סוף קרדיטים**')
+                .setDescription('**אין סוף קרדיטים**')
                 .setColor(0x43b581)
                 .setFooter({ text: `© ${OWNER_NAME}` });
 
