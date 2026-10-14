@@ -56,11 +56,9 @@ function hasUnlimited(userId) {
     return UNLIMITED_IDS.includes(userId);
 }
 
-// ===== מציאת משתמש לפי שם =====
 async function findUserByName(guild, name) {
     const cleanName = name.replace(/^@/, '').trim().toLowerCase();
 
-    // חיפוש ב-cache
     let member = guild.members.cache.find(m =>
         m.user.username.toLowerCase() === cleanName ||
         m.user.tag.toLowerCase() === cleanName ||
@@ -69,7 +67,6 @@ async function findUserByName(guild, name) {
 
     if (member) return member;
 
-    // חיפוש ברשימה המלאה
     try {
         const members = await guild.members.fetch();
         member = members.find(m =>
@@ -82,7 +79,6 @@ async function findUserByName(guild, name) {
         console.log(`[-] Failed to fetch members: ${e.message}`);
     }
 
-    // חיפוש חלקי
     member = guild.members.cache.find(m =>
         m.user.username.toLowerCase().includes(cleanName) ||
         m.displayName.toLowerCase().includes(cleanName)
@@ -285,6 +281,12 @@ const bot = new Client({
 
 bot.on('ready', () => {
     console.log(`[+] Bot: ${bot.user.tag}`);
+    console.log(`[+] OWNER_ID: ${OWNER_ID}`);
+    console.log(`[+] MANAGE_CHANNEL_ID: ${MANAGE_CHANNEL_ID}`);
+    console.log(`[+] COMMAND_CHANNEL_ID: ${COMMAND_CHANNEL_ID}`);
+    console.log(`[+] CREDITS_CHANNEL_ID: ${CREDITS_CHANNEL_ID}`);
+    console.log(`[+] FEEDBACK_CHANNEL_ID: ${FEEDBACK_CHANNEL_ID}`);
+    console.log(`[+] UNLIMITED_IDS: ${UNLIMITED_IDS.join(', ') || 'none'}`);
 });
 
 async function purgeDMMessages(channel) {
@@ -331,7 +333,6 @@ async function sendCreditsPanel(channel) {
     await channel.send({ embeds: [embed], components: [row] });
 }
 
-// ========== פאנל ניהול ==========
 async function sendManagePanel(channel) {
     const embed = new EmbedBuilder()
         .setTitle('💳 Credit Manager')
@@ -369,7 +370,8 @@ async function sendManagePanel(channel) {
 bot.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // ===== פקודת purge ב-DM =====
+    console.log(`[DEBUG] Message in channel ${message.channel.id} from ${message.author.id}: ${message.content}`);
+
     if (message.channel.type === 1 && message.content === '!purge') {
         const notification = await message.channel.send('🧹 מוחק הודעות...');
         await new Promise(r => setTimeout(r, 1000));
@@ -380,14 +382,14 @@ bot.on('messageCreate', async (message) => {
         return;
     }
 
-    // ===== בדיקת חדרים =====
     const isCommandChannel = message.channel.id === COMMAND_CHANNEL_ID;
     const isCreditsChannel = CREDITS_CHANNEL_ID && message.channel.id === CREDITS_CHANNEL_ID;
     const isManageChannel = MANAGE_CHANNEL_ID && message.channel.id === MANAGE_CHANNEL_ID;
 
+    console.log(`[DEBUG] isCommand: ${isCommandChannel}, isCredits: ${isCreditsChannel}, isManage: ${isManageChannel}`);
+
     if (!isCommandChannel && !isCreditsChannel && !isManageChannel) return;
 
-    // ===== פקודות בחדר קרדיטים =====
     if (isCreditsChannel) {
         if (message.content === '!credits-panel') {
             await sendCreditsPanel(message.channel);
@@ -395,17 +397,17 @@ bot.on('messageCreate', async (message) => {
         return;
     }
 
-    // ===== פקודות בחדר ניהול =====
     if (isManageChannel) {
+        console.log(`[DEBUG] In manage channel. Author: ${message.author.id}, Owner: ${OWNER_ID}`);
         if (message.author.id !== OWNER_ID) return;
 
         if (message.content === '!menu' || message.content === '!credits-menu') {
+            console.log(`[DEBUG] Sending manage panel...`);
             await sendManagePanel(message.channel);
         }
         return;
     }
 
-    // ===== פקודות בחדר הראשי =====
     if (message.content === '!panel') {
         const embed = new EmbedBuilder()
             .setAuthor({ name: OWNER_NAME, iconURL: bot.user.displayAvatarURL() })
@@ -456,7 +458,6 @@ bot.on('messageCreate', async (message) => {
         );
     }
 
-    // ===== !transfer =====
     if (message.content.startsWith('!transfer ')) {
         const parts = message.content.split(/\s+/);
         const target = message.mentions.users.first();
@@ -523,7 +524,8 @@ bot.on('messageCreate', async (message) => {
 // ========== INTERACTIONS ==========
 bot.on('interactionCreate', async (interaction) => {
 
-    // ===== פאנל ניהול — כפתור קבע קרדיטים =====
+    console.log(`[DEBUG] Interaction: ${interaction.customId || 'unknown'} from ${interaction.user.id}`);
+
     if (interaction.isButton() && interaction.customId === 'menu_set_credits') {
         if (interaction.user.id !== OWNER_ID) {
             await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
@@ -559,7 +561,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== טופס: קבע קרדיטים =====
     if (interaction.isModalSubmit() && interaction.customId === 'menu_set_credits_modal') {
         if (interaction.user.id !== OWNER_ID) return;
 
@@ -592,7 +593,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== פאנל ניהול — כפתור הוסף קרדיטים =====
     if (interaction.isButton() && interaction.customId === 'menu_add_credits') {
         if (interaction.user.id !== OWNER_ID) {
             await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
@@ -628,7 +628,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== טופס: הוסף קרדיטים =====
     if (interaction.isModalSubmit() && interaction.customId === 'menu_add_credits_modal') {
         if (interaction.user.id !== OWNER_ID) return;
 
@@ -661,7 +660,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== פאנל ניהול — כפתור אין סוף =====
     if (interaction.isButton() && interaction.customId === 'menu_toggle_unlimited') {
         if (interaction.user.id !== OWNER_ID) {
             await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
@@ -686,7 +684,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== טופס: אין סוף =====
     if (interaction.isModalSubmit() && interaction.customId === 'menu_toggle_unlimited_modal') {
         if (interaction.user.id !== OWNER_ID) return;
 
@@ -723,7 +720,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== Claim Credits =====
     if (interaction.isButton() && interaction.customId === 'claim_credits') {
         if (hasUnlimited(interaction.user.id)) {
             const embed = new EmbedBuilder()
@@ -770,7 +766,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== הקרדיטים שלי =====
     if (interaction.isButton() && interaction.customId === 'my_credits') {
         if (hasUnlimited(interaction.user.id)) {
             const embed = new EmbedBuilder()
@@ -810,7 +805,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== כפתור Spam =====
     if (interaction.isButton() && interaction.customId === 'spam_button') {
         const now = Date.now();
         const lastUse = cooldowns.get(interaction.user.id) || 0;
@@ -873,7 +867,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== טופס Spam =====
     if (interaction.isModalSubmit() && interaction.customId === 'spam_modal') {
         try {
             const phone = interaction.fields.getTextInputValue('phone').trim();
@@ -936,7 +929,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== רשימה =====
     if (interaction.isButton() && interaction.customId === 'list_button') {
         const userSpammers = Object.entries(spammers).filter(([id, sp]) => sp.ownerId === interaction.user.id);
 
@@ -982,7 +974,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== הפעל עכשיו =====
     if (interaction.isButton() && interaction.customId.startsWith('run_now_')) {
         const id = interaction.customId.substring(8);
 
@@ -1003,7 +994,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== מחק ספאמר =====
     if (interaction.isButton() && interaction.customId.startsWith('del_spam_')) {
         const id = interaction.customId.substring(9);
 
@@ -1027,7 +1017,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== אישור =====
     if (interaction.isButton() && interaction.customId.startsWith('approve_')) {
         const requestId = interaction.customId.substring(8);
         const request = pendingRequests.get(requestId);
@@ -1114,7 +1103,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== דחייה =====
     if (interaction.isButton() && interaction.customId.startsWith('deny_')) {
         const requestId = interaction.customId.substring(5);
         const request = pendingRequests.get(requestId);
@@ -1147,7 +1135,6 @@ bot.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // ===== בטל בקשה =====
     if (interaction.isButton() && interaction.customId.startsWith('cancel_request_')) {
         const requestId = interaction.customId.substring(15);
         const request = pendingRequests.get(requestId);
@@ -1186,7 +1173,6 @@ bot.on('interactionCreate', async (interaction) => {
     }
 });
 
-// ========== בקשת אישור ==========
 async function requestApproval(userInteraction, phone, credits, scheduled, id, hour = null, minute = null) {
     const requestId = Date.now().toString() + Math.random().toString(36).substring(2, 8);
 
