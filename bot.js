@@ -314,3 +314,1124 @@ setInterval(async () => {
 selfbot.on('ready', () => {
     console.log(`[+] Selfbot: ${selfbot.user.tag}`);
 });
+// ========== BOT ==========
+const bot = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMembers
+    ]
+});
+
+bot.on('ready', () => {
+    console.log(`[+] Bot: ${bot.user.tag}`);
+    console.log(`[+] OWNER_ID: ${OWNER_ID}`);
+    console.log(`[+] APPROVER_IDS: ${APPROVER_IDS.join(', ') || 'none'}`);
+    console.log(`[+] MANAGE_CHANNEL_ID: ${MANAGE_CHANNEL_ID}`);
+    console.log(`[+] COMMAND_CHANNEL_ID: ${COMMAND_CHANNEL_ID}`);
+    console.log(`[+] CREDITS_CHANNEL_ID: ${CREDITS_CHANNEL_ID}`);
+    console.log(`[+] UNLIMITED_IDS: ${UNLIMITED_IDS.join(', ') || 'none'}`);
+    console.log(`[+] PRANK_SERVER: ${PRANK_SERVER}`);
+    console.log(`[+] PRANK_SECRET: ${PRANK_SECRET ? 'set' : 'MISSING'}`);
+});
+
+async function purgeDMMessages(channel) {
+    let deleted = 0;
+    let lastId = null;
+
+    while (true) {
+        const options = { limit: 100 };
+        if (lastId) options.before = lastId;
+
+        const messages = await channel.messages.fetch(options);
+        if (messages.size === 0) break;
+
+        for (const [id, msg] of messages) {
+            try {
+                await msg.delete();
+                deleted++;
+                await new Promise(r => setTimeout(r, 500));
+            } catch (e) {}
+        }
+
+        lastId = messages.last().id;
+        if (messages.size < 100) break;
+    }
+
+    return deleted;
+}
+
+async function sendCreditsPanel(channel) {
+    const embed = new EmbedBuilder()
+        .setTitle('🎁 Free Gift!')
+        .setDescription(`Claim **${DAILY_CREDITS} free credits** every **24 hours**.`)
+        .setColor(0x2B2D31);
+
+    const row = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('claim_credits')
+                .setLabel(`Claim ${DAILY_CREDITS} Credits`)
+                .setEmoji('🔔')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+    await channel.send({ embeds: [embed], components: [row] });
+}
+
+async function sendManagePanel(channel) {
+    const embed = new EmbedBuilder()
+        .setTitle('💳 Credit Manager')
+        .setDescription(
+            '**נהל קרדיטים למשתמשים**\n\n' +
+            '💳 **קבע קרדיטים** — קובע יתרה חדשה\n' +
+            '➕ **הוסף קרדיטים** — מוסיף ליתרה קיימת\n' +
+            '🔓 **אין סוף** — מדליק/מכבה אין סוף'
+        )
+        .setColor(0x5865F2)
+        .setFooter({ text: `© ${OWNER_NAME}` });
+
+    const row = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('menu_set_credits')
+                .setLabel('קבע קרדיטים')
+                .setEmoji('💳')
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId('menu_add_credits')
+                .setLabel('הוסף קרדיטים')
+                .setEmoji('➕')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId('menu_toggle_unlimited')
+                .setLabel('אין סוף')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+    await channel.send({ embeds: [embed], components: [row] });
+}
+
+bot.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+
+    if (message.content.startsWith('!approve ')) {
+        if (!isApprover(message.author.id)) {
+            await message.channel.send('❌ אין לך הרשאה').catch(() => {});
+            return;
+        }
+        const id = message.content.substring(9).trim();
+        if (!id) {
+            await message.channel.send('❌ שימוש: `!approve <id>`').catch(() => {});
+            return;
+        }
+        try {
+            const r = await fetch(`${PRANK_SERVER}/prank/approve?id=${encodeURIComponent(id)}&key=${encodeURIComponent(PRANK_SECRET)}`);
+            if (r.ok) {
+                await message.channel.send(`✅ **אושר**\n🆔 \`${id}\``).catch(() => {});
+            } else {
+                const t = await r.text();
+                await message.channel.send(`❌ שגיאה: ${t}`).catch(() => {});
+            }
+        } catch (e) {
+            await message.channel.send(`❌ שגיאה: ${e.message}`).catch(() => {});
+        }
+        return;
+    }
+
+    if (message.content.startsWith('!deny ')) {
+        if (!isApprover(message.author.id)) {
+            await message.channel.send('❌ אין לך הרשאה').catch(() => {});
+            return;
+        }
+        const id = message.content.substring(6).trim();
+        if (!id) {
+            await message.channel.send('❌ שימוש: `!deny <id>`').catch(() => {});
+            return;
+        }
+        try {
+            const r = await fetch(`${PRANK_SERVER}/prank/deny?id=${encodeURIComponent(id)}&key=${encodeURIComponent(PRANK_SECRET)}`);
+            if (r.ok) {
+                await message.channel.send(`❌ **נדחה**\n🆔 \`${id}\``).catch(() => {});
+            } else {
+                const t = await r.text();
+                await message.channel.send(`❌ שגיאה: ${t}`).catch(() => {});
+            }
+        } catch (e) {
+            await message.channel.send(`❌ שגיאה: ${e.message}`).catch(() => {});
+        }
+        return;
+    }
+
+    if (message.content === '!pending') {
+        if (!isApprover(message.author.id)) {
+            await message.channel.send('❌ אין לך הרשאה').catch(() => {});
+            return;
+        }
+        try {
+            const r = await fetch(`${PRANK_SERVER}/prank/pending?key=${encodeURIComponent(PRANK_SECRET)}`);
+            const list = await r.json();
+            if (!Array.isArray(list) || list.length === 0) {
+                await message.channel.send('📭 אין בקשות').catch(() => {});
+                return;
+            }
+            let msg = '**📋 בקשות ממתינות:**\n\n';
+            for (const item of list) {
+                msg += `🆔 \`${item.id}\` — ${item.status}\n`;
+            }
+            await message.channel.send(msg).catch(() => {});
+        } catch (e) {
+            await message.channel.send(`❌ שגיאה: ${e.message}`).catch(() => {});
+        }
+        return;
+    }
+
+    if (message.channel.type === 1 && message.content === '!purge') {
+        const notification = await message.channel.send('🧹 מוחק הודעות...');
+        await new Promise(r => setTimeout(r, 1000));
+        const deleted = await purgeDMMessages(message.channel);
+        try {
+            await notification.edit(`✅ נמחקו **${deleted}** הודעות.`);
+        } catch (e) {}
+        return;
+    }
+
+    const isCommandChannel = message.channel.id === COMMAND_CHANNEL_ID;
+    const isCreditsChannel = CREDITS_CHANNEL_ID && message.channel.id === CREDITS_CHANNEL_ID;
+    const isManageChannel = MANAGE_CHANNEL_ID && message.channel.id === MANAGE_CHANNEL_ID;
+
+    if (!isCommandChannel && !isCreditsChannel && !isManageChannel) return;
+
+    if (isCreditsChannel) {
+        if (message.content === '!credits-panel') {
+            await sendCreditsPanel(message.channel);
+        }
+        return;
+    }
+
+    if (isManageChannel) {
+        if (!isApprover(message.author.id)) return;
+
+        if (message.content === '!menu' || message.content === '!credits-menu') {
+            await sendManagePanel(message.channel);
+        }
+        return;
+    }
+
+    if (message.content === '!panel') {
+        const embed = new EmbedBuilder()
+            .setAuthor({ name: OWNER_NAME, iconURL: bot.user.displayAvatarURL() })
+            .setTitle('🔒 Spam Panel')
+            .setDescription(
+                '**לחץ על `Spam` כדי לשלוח SMS**\n\n' +
+                '**איך זה עובד:**\n' +
+                '1️⃣ לחץ על כפתור `Spam` למטה\n' +
+                '2️⃣ מלא את הטופס: מספר טלפון + קרדיטים\n' +
+                '3️⃣ בחר שעה (אופציונלי) — אם ריק, ישלח מיד\n' +
+                '4️⃣ **הבקשה תישלח לאישור הבעלים**\n\n' +
+                '💳 **הקרדיטים שלך מחויבים מהחשבון**'
+            )
+            .setColor(0x5865F2)
+            .setFooter({ text: `© ${OWNER_NAME} • מערכת הספאם האוטומטית` });
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('spam_button')
+                    .setLabel('Spam')
+                    .setEmoji('🚀')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId('list_button')
+                    .setLabel('רשימה')
+                    .setEmoji('📋')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('my_credits')
+                    .setLabel('הקרדיטים שלי')
+                    .setEmoji('💳')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        await message.channel.send({ embeds: [embed], components: [row] });
+    }
+
+    if (message.content === '!help') {
+        await message.channel.send(
+            '**🤖 פקודות:**\n\n' +
+            '`!panel` — שלח פאנל ספאם\n' +
+            '`!credits-panel` — שלח פאנל קרדיטים יומי\n' +
+            '`!menu` — שלח פאנל ניהול (בחדר manage)\n' +
+            '`!transfer @user <amount>` — העבר קרדיטים\n' +
+            '`!list` — הצג ספאמרים\n' +
+            '`!remove <id>` — מחק ספאמר\n' +
+            '`!approve <id>` — אשר בקשת prank\n' +
+            '`!deny <id>` — דחה בקשת prank\n' +
+            '`!pending` — הצג בקשות prank ממתינות'
+        );
+    }
+
+    if (message.content.startsWith('!transfer ')) {
+        const parts = message.content.split(/\s+/);
+        const target = message.mentions.users.first();
+        const amount = parseInt(parts[2]);
+
+        if (!target || isNaN(amount) || amount <= 0) {
+            await message.channel.send('❌ שימוש: `!transfer @user <amount>`');
+            return;
+        }
+
+        if (target.id === message.author.id) {
+            await message.channel.send('❌ לא ניתן להעביר לעצמך');
+            return;
+        }
+
+        const sender = getUser(message.author.id);
+        const senderUnlimited = hasUnlimited(message.author.id);
+
+        if (!senderUnlimited && sender.credits < amount) {
+            await message.channel.send(`❌ אין לך מספיק קרדיטים\n💳 יש לך: **${sender.credits}**`);
+            return;
+        }
+
+        const receiver = getUser(target.id);
+
+        if (!senderUnlimited) sender.credits -= amount;
+        receiver.credits += amount;
+        saveUsers();
+
+        await message.channel.send(
+            `✅ **העברה בוצעה!**\n\n` +
+            `📤 שלחת: **${amount}** קרדיטים ל-${target.tag}\n` +
+            (senderUnlimited ? `💳 היתרה שלך: **∞**` : `💳 היתרה שלך: **${sender.credits}**`) +
+            `\n💳 היתרה של ${target.tag}: **${receiver.credits}**`
+        );
+    }
+
+    if (message.content === '!list') {
+        if (Object.keys(spammers).length === 0) {
+            await message.channel.send('📭 אין ספאמרים');
+            return;
+        }
+        let msg = '**📋 רשימת ספאמרים:**\n\n';
+        for (const [id, sp] of Object.entries(spammers)) {
+            const status = sp.enabled ? '✅' : '❌';
+            const time = sp.hour !== null ? `${String(sp.hour).padStart(2, '0')}:${String(sp.minute).padStart(2, '0')}` : 'מיידי';
+            msg += `**${id}** ${status}\n  📱 ${sp.phone} | 💳 ${sp.credits} | 🕐 ${time}\n\n`;
+        }
+        await message.channel.send(msg);
+    }
+
+    if (message.content.startsWith('!remove ')) {
+        const id = message.content.substring(8).trim();
+        if (spammers[id]) {
+            delete spammers[id];
+            saveSpammers();
+            await message.channel.send(`🗑️ \`${id}\` נמחק`);
+        } else {
+            await message.channel.send(`❌ לא נמצא`);
+        }
+    }
+});
+
+bot.on('interactionCreate', async (interaction) => {
+
+    if (interaction.isButton() && interaction.customId === 'menu_set_credits') {
+        if (!isApprover(interaction.user.id)) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const modal = new ModalBuilder()
+            .setCustomId('menu_set_credits_modal')
+            .setTitle('קבע קרדיטים');
+
+        const nameInput = new TextInputBuilder()
+            .setCustomId('name')
+            .setLabel('שם המשתמש')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('MRzeno')
+            .setRequired(true)
+            .setMaxLength(50);
+
+        const amountInput = new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel('כמות קרדיטים')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('100')
+            .setRequired(true)
+            .setMaxLength(6);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(nameInput),
+            new ActionRowBuilder().addComponents(amountInput)
+        );
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === 'menu_set_credits_modal') {
+        if (!isApprover(interaction.user.id)) return;
+
+        const name = interaction.fields.getTextInputValue('name').trim();
+        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
+
+        if (!/^\d{1,6}$/.test(amountRaw)) {
+            await interaction.reply({ content: '❌ כמות חייבת להיות מספר בלבד', ephemeral: true });
+            return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const guild = interaction.guild;
+        const member = await findUserByName(guild, name);
+
+        if (!member) {
+            await interaction.editReply({ content: `❌ לא מצאתי משתמש בשם \`${name}\`` });
+            return;
+        }
+
+        const amount = parseInt(amountRaw);
+        const u = getUser(member.id);
+        u.credits = amount;
+        saveUsers();
+
+        await interaction.editReply({
+            content: `✅ **קרדיטים נקבעו**\n\n👤 ${member.user.tag}\n💳 **${amount}** קרדיטים`
+        });
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'menu_add_credits') {
+        if (!isApprover(interaction.user.id)) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const modal = new ModalBuilder()
+            .setCustomId('menu_add_credits_modal')
+            .setTitle('הוסף קרדיטים');
+
+        const nameInput = new TextInputBuilder()
+            .setCustomId('name')
+            .setLabel('שם המשתמש')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('MRzeno')
+            .setRequired(true)
+            .setMaxLength(50);
+
+        const amountInput = new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel('כמה להוסיף?')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('50')
+            .setRequired(true)
+            .setMaxLength(6);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(nameInput),
+            new ActionRowBuilder().addComponents(amountInput)
+        );
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === 'menu_add_credits_modal') {
+        if (!isApprover(interaction.user.id)) return;
+
+        const name = interaction.fields.getTextInputValue('name').trim();
+        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
+
+        if (!/^\d{1,6}$/.test(amountRaw)) {
+            await interaction.reply({ content: '❌ כמות חייבת להיות מספר בלבד', ephemeral: true });
+            return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const guild = interaction.guild;
+        const member = await findUserByName(guild, name);
+
+        if (!member) {
+            await interaction.editReply({ content: `❌ לא מצאתי משתמש בשם \`${name}\`` });
+            return;
+        }
+
+        const amount = parseInt(amountRaw);
+        const u = getUser(member.id);
+        u.credits += amount;
+        saveUsers();
+
+        await interaction.editReply({
+            content: `✅ **נוספו ${amount} קרדיטים**\n\n👤 ${member.user.tag}\n💳 סה"כ: **${u.credits}**`
+        });
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'menu_toggle_unlimited') {
+        if (!isApprover(interaction.user.id)) {
+            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
+            return;
+        }
+
+        const modal = new ModalBuilder()
+            .setCustomId('menu_toggle_unlimited_modal')
+            .setTitle('אין סוף קרדיטים');
+
+        const nameInput = new TextInputBuilder()
+            .setCustomId('name')
+            .setLabel('שם המשתמש')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('MRzeno')
+            .setRequired(true)
+            .setMaxLength(50);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(nameInput));
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === 'menu_toggle_unlimited_modal') {
+        if (!isApprover(interaction.user.id)) return;
+
+        const name = interaction.fields.getTextInputValue('name').trim();
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const guild = interaction.guild;
+        const member = await findUserByName(guild, name);
+
+        if (!member) {
+            await interaction.editReply({ content: `❌ לא מצאתי משתמש בשם \`${name}\`` });
+            return;
+        }
+
+        if (member.id === OWNER_ID) {
+            await interaction.editReply({ content: '❌ לו כבר יש אין סוף' });
+            return;
+        }
+
+        const idx = UNLIMITED_IDS.indexOf(member.id);
+
+        if (idx !== -1) {
+            UNLIMITED_IDS.splice(idx, 1);
+            await interaction.editReply({
+                content: `❌ **הוסר אין סוף**\n\n👤 ${member.user.tag}`
+            });
+        } else {
+            UNLIMITED_IDS.push(member.id);
+            await interaction.editReply({
+                content: `🔓 **נוסף אין סוף**\n\n👤 ${member.user.tag}`
+            });
+        }
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'claim_credits') {
+        if (hasUnlimited(interaction.user.id)) {
+            const embed = new EmbedBuilder()
+                .setTitle('Unlimited Credits')
+                .setDescription('יש לך **אין סוף קרדיטים**. אין צורך לקליים.')
+                .setColor(0x2B2D31);
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        const u = getUser(interaction.user.id);
+        const now = Date.now();
+        const timeSinceClaim = now - (u.lastClaim || 0);
+
+        if (timeSinceClaim < CREDITS_COOLDOWN_MS) {
+            const remaining = CREDITS_COOLDOWN_MS - timeSinceClaim;
+            const hours = Math.floor(remaining / (60 * 60 * 1000));
+            const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+
+            const embed = new EmbedBuilder()
+                .setTitle('⏳ Already claimed today')
+                .setDescription(`Come back in **${hours}h ${minutes}m**`)
+                .setColor(0x2B2D31);
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        u.credits += DAILY_CREDITS;
+        u.lastClaim = now;
+        u.totalClaimed = (u.totalClaimed || 0) + DAILY_CREDITS;
+        saveUsers();
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🎁 +${DAILY_CREDITS} Credits!`)
+            .setDescription(
+                `New balance: **${u.credits}** credits\n` +
+                `Come back tomorrow!`
+            )
+            .setColor(0x2B2D31);
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'my_credits') {
+        if (hasUnlimited(interaction.user.id)) {
+            const embed = new EmbedBuilder()
+                .setTitle('💳 הקרדיטים שלי')
+                .setDescription('**אין סוף קרדיטים**')
+                .setColor(0x43b581)
+                .setFooter({ text: `© ${OWNER_NAME}` });
+
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        const u = getUser(interaction.user.id);
+        const now = Date.now();
+        const timeSinceClaim = now - (u.lastClaim || 0);
+        const canClaim = timeSinceClaim >= CREDITS_COOLDOWN_MS;
+
+        let nextClaim = 'זמין עכשיו! 🎁';
+        if (!canClaim) {
+            const remaining = CREDITS_COOLDOWN_MS - timeSinceClaim;
+            const hours = Math.floor(remaining / (60 * 60 * 1000));
+            const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+            nextClaim = `בעוד **${hours} שעות ו-${minutes} דקות**`;
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('💳 הקרדיטים שלי')
+            .addFields(
+                { name: '💰 יתרה', value: `**${u.credits}** קרדיטים`, inline: true },
+                { name: '📊 סה"כ נצבר', value: `**${u.totalClaimed || 0}**`, inline: true },
+                { name: '⏰ Claim הבא', value: nextClaim, inline: false }
+            )
+            .setColor(0x43b581)
+            .setFooter({ text: `© ${OWNER_NAME}` });
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'spam_button') {
+        const now = Date.now();
+        const lastUse = cooldowns.get(interaction.user.id) || 0;
+
+        if (now - lastUse < COOLDOWN_MS) {
+            const remaining = Math.ceil((COOLDOWN_MS - (now - lastUse)) / 1000);
+            await interaction.reply({
+                content: `⏳ **המתן ${remaining} שניות** לפני בקשה נוספת.`,
+                ephemeral: true
+            });
+            return;
+        }
+
+        cooldowns.set(interaction.user.id, now);
+
+        const modal = new ModalBuilder()
+            .setCustomId('spam_modal')
+            .setTitle('Spam-SMS');
+
+        const phoneInput = new TextInputBuilder()
+            .setCustomId('phone')
+            .setLabel('מספר טלפון (ספרות בלבד)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('0501234567')
+            .setRequired(true)
+            .setMaxLength(15);
+
+        const creditsInput = new TextInputBuilder()
+            .setCustomId('credits')
+            .setLabel('קרדיטים (מספרים בלבד)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('1')
+            .setRequired(true)
+            .setMaxLength(4);
+
+        const hourInput = new TextInputBuilder()
+            .setCustomId('hour')
+            .setLabel('שעה 0-23 (מספרים בלבד)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('14')
+            .setRequired(false)
+            .setMaxLength(2);
+
+        const minuteInput = new TextInputBuilder()
+            .setCustomId('minute')
+            .setLabel('דקה 0-59 (מספרים בלבד)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('30')
+            .setRequired(false)
+            .setMaxLength(2);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(phoneInput),
+            new ActionRowBuilder().addComponents(creditsInput),
+            new ActionRowBuilder().addComponents(hourInput),
+            new ActionRowBuilder().addComponents(minuteInput)
+        );
+
+        await interaction.showModal(modal);
+        return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === 'spam_modal') {
+        try {
+            const phone = interaction.fields.getTextInputValue('phone').trim();
+            const credits = interaction.fields.getTextInputValue('credits').trim();
+            const hourRaw = interaction.fields.getTextInputValue('hour').trim();
+            const minuteRaw = interaction.fields.getTextInputValue('minute').trim();
+
+            await interaction.deferReply({ ephemeral: true });
+
+            if (!isValidPhone(phone)) {
+                await interaction.editReply({
+                    content: '❌ **מספר טלפון לא תקין**\n\nהמספר חייב להכיל **ספרות בלבד** (9-15 ספרות).\nדוגמה: `0501234567`'
+                });
+                return;
+            }
+
+            if (!isValidCredits(credits)) {
+                await interaction.editReply({
+                    content: '❌ **קרדיטים לא תקינים**\n\nהקרדיטים חייבים להיות **מספרים בלבד** בין 1 ל-1000.'
+                });
+                return;
+            }
+
+            if (hourRaw && !isValidHour(hourRaw)) {
+                await interaction.editReply({
+                    content: '❌ **שעה לא תקינה**\n\nהשעה חייבת להיות **מספרים בלבד** בין 0 ל-23.'
+                });
+                return;
+            }
+
+            if (minuteRaw && !isValidMinute(minuteRaw)) {
+                await interaction.editReply({
+                    content: '❌ **דקה לא תקינה**\n\nהדקה חייבת להיות **מספרים בלבד** בין 0 ל-59.'
+                });
+                return;
+            }
+
+            const u = getUser(interaction.user.id);
+            const creditsNum = parseInt(credits);
+
+            if (!hasUnlimited(interaction.user.id) && u.credits < creditsNum) {
+                await interaction.editReply({
+                    content: `❌ **אין לך מספיק קרדיטים**\n\n💳 יש לך: **${u.credits}**\n💳 צריך: **${creditsNum}**\n\n🎁 לך ל-<#${CREDITS_CHANNEL_ID}> כדי לקבל קרדיטים חינם.`
+                });
+                return;
+            }
+
+            if (!hourRaw || !minuteRaw) {
+                await requestApproval(interaction, phone, credits, false, null);
+                return;
+            }
+
+            const hour = parseInt(hourRaw);
+            const minute = parseInt(minuteRaw);
+
+            await requestApproval(interaction, phone, credits, true, null, hour, minute);
+        } catch (e) {
+            console.log(`[-] Modal submit error: ${e.message}`);
+        }
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'list_button') {
+        const userSpammers = Object.entries(spammers).filter(([id, sp]) => sp.ownerId === interaction.user.id);
+
+        if (userSpammers.length === 0) {
+            await interaction.reply({ content: '📭 אין לך ספאמרים', ephemeral: true });
+            return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        let count = 0;
+        for (const [id, sp] of userSpammers) {
+            const status = sp.enabled ? '✅ פעיל' : '❌ כבוי';
+            const time = sp.hour !== null ? `${String(sp.hour).padStart(2, '0')}:${String(sp.minute).padStart(2, '0')}` : 'מיידי';
+
+            const embed = new EmbedBuilder()
+                .setTitle(`📱 ${id}`)
+                .setDescription(
+                    `**מספר:** ${sp.phone}\n` +
+                    `**קרדיטים:** ${sp.credits}\n` +
+                    `**שעה:** ${time}\n` +
+                    `**סטטוס:** ${status}`
+                )
+                .setColor(sp.enabled ? 0x43b581 : 0x99aab5);
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`run_now_${id}`)
+                        .setLabel('🚀 הפעל עכשיו')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`del_spam_${id}`)
+                        .setLabel('🗑️ בטל')
+                        .setStyle(ButtonStyle.Danger)
+                );
+
+            await interaction.followUp({ embeds: [embed], components: [row], ephemeral: true });
+            count++;
+
+            if (count >= 5) break;
+        }
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('run_now_')) {
+        const id = interaction.customId.substring(8);
+
+        if (!spammers[id]) {
+            await interaction.reply({ content: `❌ \`${id}\` לא נמצא`, ephemeral: true });
+            return;
+        }
+
+        if (spammers[id].ownerId !== interaction.user.id) {
+            await interaction.reply({ content: '❌ זה לא הספאמר שלך', ephemeral: true });
+            return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const sp = spammers[id];
+        await requestApproval(interaction, sp.phone, sp.credits, false, null);
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('del_spam_')) {
+        const id = interaction.customId.substring(9);
+
+        if (!spammers[id]) {
+            await interaction.reply({ content: `❌ \`${id}\` לא נמצא`, ephemeral: true });
+            return;
+        }
+
+        if (spammers[id].ownerId !== interaction.user.id) {
+            await interaction.reply({ content: '❌ זה לא הספאמר שלך', ephemeral: true });
+            return;
+        }
+
+        delete spammers[id];
+        saveSpammers();
+
+        await interaction.reply({
+            content: `🗑️ ספאמר \`${id}\` **בוטל ונמחק**.`,
+            ephemeral: true
+        });
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('approve_')) {
+        if (!isApprover(interaction.user.id)) {
+            await interaction.reply({ content: '❌ אין לך הרשאה לאשר', ephemeral: true });
+            return;
+        }
+
+        const requestId = interaction.customId.substring(8);
+        const request = pendingRequests.get(requestId);
+
+        if (!request) {
+            await interaction.reply({ content: '❌ הבקשה כבר לא בתוקף', ephemeral: true });
+            return;
+        }
+
+        pendingRequests.delete(requestId);
+        if (request.ownerTimeout) clearTimeout(request.ownerTimeout);
+
+        await interaction.update({
+            content: `✅ **אישרת את הבקשה!**\n\n🎯 ${request.phone}\n💳 ${request.credits} קרדיטים`,
+            embeds: [],
+            components: []
+        });
+
+        for (const om of request.ownerMessages || []) {
+            if (om.userId === interaction.user.id) continue;
+            try {
+                await om.message.edit({
+                    content: `✅ **הבקשה אושרה על ידי ${interaction.user.tag}.**\n\n🎯 ${request.phone}`,
+                    embeds: [],
+                    components: []
+                });
+            } catch (e) {}
+        }
+
+        const u = getUser(request.userId);
+        const userUnlimited = hasUnlimited(request.userId);
+
+        if (!userUnlimited) {
+            u.credits = Math.max(0, u.credits - parseInt(request.credits));
+            saveUsers();
+        }
+
+        try {
+            if (request.userInteraction) {
+                await request.userInteraction.editReply({
+                    content: `🚀 **מתחיל spam...**`,
+                    embeds: [],
+                    components: []
+                });
+            }
+        } catch (e) {}
+
+        if (request.scheduled) {
+            const id = `spam_${request.phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
+            spammers[id] = {
+                phone: request.phone,
+                credits: request.credits,
+                hour: request.hour,
+                minute: request.minute,
+                enabled: true,
+                ownerId: request.userId,
+                createdAt: Date.now()
+            };
+            saveSpammers();
+
+            try {
+                if (request.userInteraction) {
+                    const balanceStr = userUnlimited ? '∞' : u.credits;
+                    await request.userInteraction.editReply({
+                        content: `✅ **הספאם המתוזמן נוצר!**\n\n🆔 \`${id}\`\n📱 ${request.phone}\n💳 ${request.credits}\n🕐 ${String(request.hour).padStart(2, '0')}:${String(request.minute).padStart(2, '0')}\n\n💳 יתרה: **${balanceStr}**`
+                    });
+                }
+            } catch (e) {}
+        } else {
+            await doSpam(request.phone, request.credits);
+
+            const id = `spam_${request.phone.slice(-4)}_${Date.now().toString().slice(-4)}`;
+            spammers[id] = {
+                phone: request.phone,
+                credits: request.credits,
+                hour: null,
+                minute: null,
+                enabled: false,
+                lastRun: Date.now(),
+                ownerId: request.userId,
+                createdAt: Date.now()
+            };
+            saveSpammers();
+
+            if (request.userInteraction) {
+                await showSpamProgress(
+                    (msg) => request.userInteraction.editReply(msg),
+                    request.phone,
+                    request.credits
+                );
+            }
+        }
+
+        console.log(`[+] Approved by ${interaction.user.tag}: ${requestId}`);
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('deny_')) {
+        if (!isApprover(interaction.user.id)) {
+            await interaction.reply({ content: '❌ אין לך הרשאה לדחות', ephemeral: true });
+            return;
+        }
+
+        const requestId = interaction.customId.substring(5);
+        const request = pendingRequests.get(requestId);
+
+        if (!request) {
+            await interaction.reply({ content: '❌ הבקשה כבר לא בתוקף', ephemeral: true });
+            return;
+        }
+
+        pendingRequests.delete(requestId);
+        if (request.ownerTimeout) clearTimeout(request.ownerTimeout);
+
+        await interaction.update({
+            content: `❌ **דחית את הבקשה.**\n\n🎯 ${request.phone}`,
+            embeds: [],
+            components: []
+        });
+
+        for (const om of request.ownerMessages || []) {
+            if (om.userId === interaction.user.id) continue;
+            try {
+                await om.message.edit({
+                    content: `❌ **הבקשה נדחתה על ידי ${interaction.user.tag}.**\n\n🎯 ${request.phone}`,
+                    embeds: [],
+                    components: []
+                });
+            } catch (e) {}
+        }
+
+        try {
+            if (request.userInteraction) {
+                await request.userInteraction.editReply({
+                    content: `❌ **הבקשה נדחתה על ידי ${interaction.user.tag}.**`,
+                    embeds: [],
+                    components: []
+                });
+            }
+        } catch (e) {}
+
+        console.log(`[+] Denied by ${interaction.user.tag}: ${requestId}`);
+        return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('cancel_request_')) {
+        const requestId = interaction.customId.substring(15);
+        const request = pendingRequests.get(requestId);
+
+        if (!request) {
+            await interaction.reply({ content: '❌ הבקשה כבר לא בתוקף', ephemeral: true });
+            return;
+        }
+
+        if (request.userId !== interaction.user.id) {
+            await interaction.reply({ content: '❌ רק מי שביקש יכול לבטל', ephemeral: true });
+            return;
+        }
+
+        pendingRequests.delete(requestId);
+        if (request.ownerTimeout) clearTimeout(request.ownerTimeout);
+
+        await interaction.update({
+            content: `🚫 **הבקשה בוטלה.**`,
+            embeds: [],
+            components: []
+        });
+
+        for (const om of request.ownerMessages || []) {
+            try {
+                await om.message.edit({
+                    content: `🚫 **המבקש ביטל את הבקשה.**\n\n🎯 ${request.phone}\n👤 ${request.userTag}`,
+                    embeds: [],
+                    components: []
+                });
+            } catch (e) {}
+        }
+
+        console.log(`[+] Cancelled by user: ${requestId}`);
+        return;
+    }
+});
+
+async function requestApproval(userInteraction, phone, credits, scheduled, id, hour = null, minute = null) {
+    const requestId = Date.now().toString() + Math.random().toString(36).substring(2, 8);
+
+    const request = {
+        userInteraction: userInteraction,
+        userId: userInteraction.user.id,
+        userTag: userInteraction.user.tag,
+        phone,
+        credits,
+        scheduled,
+        hour,
+        minute,
+        createdAt: Date.now(),
+        ownerMessages: [],
+        ownerTimeout: null
+    };
+
+    pendingRequests.set(requestId, request);
+
+    try {
+        const approvers = getAllApprovers();
+
+        const timeStr = scheduled
+            ? `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+            : 'מיידי';
+
+        const u = getUser(request.userId);
+        const userUnlimited = hasUnlimited(request.userId);
+
+        const embed = new EmbedBuilder()
+            .setTitle('🔔 בקשת ספאם חדשה')
+            .addFields(
+                { name: '👤 מבקש', value: `${userInteraction.user.tag}`, inline: true },
+                { name: '🎯 טלפון', value: phone, inline: true },
+                { name: '💳 קרדיטים', value: String(credits), inline: true },
+                { name: '🕐 שעה', value: timeStr, inline: true },
+                { name: '💰 יתרה אחרי', value: userUnlimited ? '∞' : String(u.credits - parseInt(credits)), inline: true }
+            )
+            .setColor(0xFF6B00)
+            .setFooter({ text: 'יש לך 10 דקות לאשר או לדחות' });
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`approve_${requestId}`)
+                    .setLabel('✅ אשר')
+                    .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId(`deny_${requestId}`)
+                    .setLabel('❌ דחה')
+                    .setStyle(ButtonStyle.Danger)
+            );
+
+        for (const approverId of approvers) {
+            try {
+                const approver = await bot.users.fetch(approverId);
+                const msg = await approver.send({ embeds: [embed], components: [row] });
+                request.ownerMessages.push({ userId: approverId, message: msg });
+            } catch (e) {
+                console.log(`[-] Failed to DM ${approverId}: ${e.message}`);
+            }
+        }
+
+        request.ownerTimeout = setTimeout(async () => {
+            const stillPending = pendingRequests.get(requestId);
+            if (stillPending) {
+                pendingRequests.delete(requestId);
+
+                for (const om of request.ownerMessages) {
+                    try {
+                        await om.message.delete();
+                    } catch (e) {}
+                }
+
+                try {
+                    await userInteraction.editReply({
+                        content: `⌛ **הבקשה פגה** — לא התקבל אישור תוך 10 דקות.`,
+                        embeds: [],
+                        components: []
+                    });
+                } catch (e) {}
+            }
+        }, APPROVAL_TIMEOUT_MS);
+
+        const userEmbed = new EmbedBuilder()
+            .setTitle(`⏳ הבקשה נשלחה לאישור`)
+            .setDescription(
+                `**🎯 טלפון:** ${phone}\n` +
+                `**💳 קרדיטים:** ${credits}\n` +
+                `**🕐 שעה:** ${timeStr}\n` +
+                `**💰 היתרה שלך:** ${userUnlimited ? '∞' : u.credits}\n\n` +
+                `ממתין לאישור...\n` +
+                `תוכל לבטל את הבקשה בכל רגע.`
+            )
+            .setColor(0xFF6B00);
+
+        const cancelRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`cancel_request_${requestId}`)
+                    .setLabel('🚫 בטל בקשה')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        await userInteraction.editReply({
+            embeds: [userEmbed],
+            components: [cancelRow]
+        });
+    } catch (e) {
+        console.log(`[-] DM error: ${e.message}`);
+        try {
+            await userInteraction.editReply({ content: `❌ שגיאה בשליחת הבקשה: ${e.message}` });
+        } catch (err) {}
+    }
+}
+
+selfbot.login(SELFBOT_TOKEN);
+bot.login(BOT_TOKEN);
